@@ -1,0 +1,54 @@
+name: platform-agents-checks
+
+# Installed by `pa install`; `pa upgrade` rewrites it. Make both jobs required status checks on the
+# default branch.
+#
+#   validate     static checks: settings, policies, pipeline specs, where pipeline code reads and
+#                writes, credentials, scope of builder PRs, syntax. Never runs pipeline code.
+#   tool checks  checks that run code, e.g. importing every DAG on the instance's Airflow version.
+#                No write token and no cloud sign-in here, so code in a PR can't reach anything.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Steps in a container default to sh; the platform-agents commands expect bash.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 10
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - env:
+          PA_PR_BRANCH: ${{ github.head_ref }}
+          PA_PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: pa check validate
+
+  tool-checks:
+    name: tool checks
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 30
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: pa check tools

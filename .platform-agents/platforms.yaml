@@ -1,0 +1,16 @@
+# How the platform agents sign in to each platform you use, and the canaries the guardrails probe
+# before every run. No secrets go here. Fill in every REPLACE_WITH_ value; the product's install
+# guide says how to create each one.
+
+platforms:
+  gcp:
+    workload_identity_provider: projects/537298433453/locations/global/workloadIdentityPools/github/providers/dev-repo # Workload Identity provider that trusts the client's dev repo: projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>
+    identities:
+      agent: maint-agent@atlantean-land-415108.iam.gserviceaccount.com # maint-agent service account email: the identity Claude runs as (metadata only)
+      detector: maint-detector@atlantean-land-415108.iam.gserviceaccount.com # maint-detector service account email: the detect and context jobs (never Claude)
+    canaries:
+      table: atlantean-land-415108:agent_canary.canary # Canary BigQuery table, <project>:<dataset>.<table>
+      object: gs://atlantean-land-415108-agent-canary/canary.txt # Canary Cloud Storage object, gs://<bucket>/<object>
+      secret: projects/atlantean-land-415108/secrets/agent-canary # Canary secret, projects/<project>/secrets/<name>
+    # optional: governance.include_ancestors: ...  # true to read the folders' and organization's IAM policies too, for roles inherited from above the project (the detector needs getIamPolicy there)
+    # optional: governance.lineage_locations: ...  # Knowledge Catalog lineage locations to read, e.g. [eu]; the detector needs roles/datalineage.viewer. Leave unset to use only the repo's lineage.
