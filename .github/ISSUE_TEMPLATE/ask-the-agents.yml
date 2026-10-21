@@ -1,0 +1,21 @@
+name: Ask the platform agents
+description: Ask about errors, pipelines or the agents' PRs. An agent answers here; it reads logs and metadata only, and never changes anything.
+title: "Question: "
+labels: [agent-question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An agent answers in this issue, usually within a few minutes. It can read error logs, table schemas, file names and settings, and the code in this repo. It can't see the data itself. To ask a follow-up, comment with `@claude` and your question. Never paste real rows or personal data here.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      placeholder: Why did the sales_daily pipeline fail last night? Is it the same error as last week?
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Which environment, pipeline or PR is it about? (optional)
+      placeholder: "orchestrator-prod, sales-orders-daily, or #42"

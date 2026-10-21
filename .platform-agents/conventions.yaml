@@ -1,0 +1,49 @@
+# Your standards for pipelines. The pipeline builder follows these for every pipeline
+# it writes. Change it through a normal PR.
+
+pipeline_ids:
+  # kebab-case, at most 60 characters. Becomes the folder name, the branch name and, with
+  # underscores, the DAG id and file name.
+  pattern: "<domain>-<what>-<frequency>"   # e.g. sales-orders-daily
+  examples: [sales-orders-daily, finance-invoices-hourly]
+
+# Where each layer's tables go. <domain> is the business area the request is about.
+layers:
+  raw: "raw_<domain>"        # loaded as-is from the source, append only
+  staging: "stg_<domain>"    # cleaned and typed
+  gold: "<domain>"           # what reports and people use
+
+defaults:
+  owner: data-platform        # GitHub user or team, when the request names none
+  timezone: UTC
+  retries: 2
+  retry_delay_minutes: 5
+  max_active_runs: 1
+  catchup: false
+
+tables:
+  partition_by: ingestion_date    # raw tables: partition by load date
+  require_column_descriptions: true
+
+# Extra DAG tags every pipeline carries, besides pipeline:<id> and owner:<owner>.
+tags: []
+
+# GitHub users or teams to request as reviewers on every pipeline PR.
+reviewers: []
+
+# Columns every table carries from the first SQL step on, so a person with data access can follow any
+# row back through the layers to the file or run it came from. The agents never read them. Tables loaded
+# straight from files keep the files' columns; their partition (the load date) identifies the source folder.
+provenance_columns:
+  enabled: true
+  columns:
+    _source_uri: the file, or the run's source folder, the row was loaded from
+    _load_id: the orchestrator run that loaded it
+    _loaded_at: when it was loaded, UTC
+
+# How the governance agent writes business names for columns (governance/glossary/).
+glossary:
+  style: Title Case words, no abbreviations or underscores
+  examples:
+    cust_id: Customer ID
+    ordered_at: Order Time

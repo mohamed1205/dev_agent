@@ -1,0 +1,83 @@
+name: Pipeline request
+description: Ask the pipeline builder for a new data pipeline, or a change to one it built. It replies with questions or a pull request.
+title: "Pipeline: "
+labels: [pipeline-request]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The pipeline builder reads this and opens a pull request for review. It can't see the data itself, only table schemas and file names, so describe what the data looks like. Never paste real rows or personal data here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What should the pipeline do?
+      description: In plain words. What it's for helps too.
+      placeholder: Load the daily order files into the warehouse, then keep a clean orders table for the sales dashboard.
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Where does the data come from?
+      description: The tables or files, named the way your platform names them (for example account.dataset.table, or a bucket path). For files, give the format, whether there's a header row, the delimiter, and the columns with their types.
+      placeholder: "The orders files in the raw bucket, one folder per day (orders/YYYYMMDD/*.csv), comma-separated with a header row. Columns: order_id (string), customer_id (string), amount (numeric), ordered_at (timestamp, UTC)."
+    validations:
+      required: true
+  - type: textarea
+    id: targets
+    attributes:
+      label: Where should it go?
+      description: The table or tables, named the way your platform names them, or the layer (raw, staging, gold) if you're not sure.
+      placeholder: The orders table in the sales dataset
+    validations:
+      required: true
+  - type: dropdown
+    id: write_mode
+    attributes:
+      label: How should each run write?
+      options:
+        - Add the new rows (append)
+        - Update rows that already exist and add new ones (merge)
+        - Replace the whole table (replace)
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: merge_keys
+    attributes:
+      label: For updates, which columns identify a row?
+      placeholder: order_id
+  - type: input
+    id: schedule
+    attributes:
+      label: When should it run?
+      description: Include the timezone, and when the source data is usually ready.
+      placeholder: Every day at 06:00 Europe/Berlin; files arrive by 05:30.
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Owner
+      description: The GitHub user or team responsible. Leave blank for the default in .platform-agents/conventions.yaml.
+  - type: dropdown
+    id: sensitivity
+    attributes:
+      label: Does the data include personal or confidential information?
+      options:
+        - "No"
+        - Personal data (names, contact details, ids)
+        - Confidential business data
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: existing
+    attributes:
+      label: Existing pipeline (for changes only)
+      description: The id of the pipeline to change, e.g. sales-orders-daily. Leave blank for a new pipeline.
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else?
+      description: Checks it should make, deadlines, who uses the result.

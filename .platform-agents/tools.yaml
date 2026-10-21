@@ -1,0 +1,43 @@
+# Instances: which of your tool environments the platform agents work with. Change it through a normal PR.
+#
+# One instance per tool and environment. What the agents may do with each tool comes from its tool
+# pack in the product; here you only say where it is. Fill in every REPLACE_WITH_ value, then set
+# `enabled: true`. `pa check validate` (and the checks workflow) checks this file.
+#
+#   name          unique id (lowercase, digits, hyphens); used in branch names, labels and policies/<name>/
+#   tool          the tool pack
+#   enabled       false = no agent uses this instance
+#   agents        which agents use it: error-triage and/or pipeline-builder
+#   account       where it lives, as its platform names it (see the comment on each)
+#   params        the tool pack's settings
+#   filter_extra  optional, error-triage only: appended to the tool's error filter to silence known noise
+
+instances:
+  - name: composer-dev
+    tool: composer
+    enabled: true
+    agents: [error-triage, pipeline-builder, governance]
+    account: atlantean-land-415108  # GCP project ID
+    params:
+      environment: dev-composer  # Composer environment name
+      location: us-central1  # the environment's region
+      airflow_version: 2.11.1  # Airflow version the environment runs. CI installs it to test that DAGs import.
+      # repo_path: ...  # optional (default dags): folder in the dev repo that holds this environment's DAGs (deployed to its DAG bucket)
+      # ci_packages: ...  # optional: extra PyPI packages your DAGs import (usually the environment's PyPI packages), installed for the DAG import test
+
+  - name: bigquery-dev
+    tool: bigquery
+    enabled: true
+    agents: [pipeline-builder, governance]
+    account: atlantean-land-415108  # GCP project ID
+    params:
+      location: US  # where the datasets live. Jobs must run in the same location.
+      datasets: [dev_raw]  # the datasets pipelines may read from or write to (a list). The pipeline checks reject code that names any other dataset.
+
+  - name: gcs-dev
+    tool: gcs
+    enabled: true
+    agents: [pipeline-builder, governance]
+    account: atlantean-land-415108  # GCP project ID
+    params:
+      buckets: [atlantean-land-415108-dev-data]  # the buckets pipelines may read from or write to (a list). The pipeline checks reject code that names any other bucket.

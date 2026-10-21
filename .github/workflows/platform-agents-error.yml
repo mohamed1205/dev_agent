@@ -1,0 +1,106 @@
+name: platform-agents-error
+
+# Installed by `pa install`; `pa upgrade` rewrites it. Change behaviour through .platform-agents/, not here.
+#
+# The error check (every error.every_minutes in config.yaml; `pa upgrade` writes the schedule below),
+# then a fix PR for each instance with errors or with tables that stopped updating.
+#   detect: no Claude. Signs in as the detector identity (GitHub environment platform-agents-detector).
+#   fix:    signs in as the agent identity (environment platform-agents-agent), which can read
+#           metadata but never data. The guardrails run first; Claude starts only if all of them pass.
+# Every job runs the platform-agents image at the version in the PA_VERSION variable.
+
+on:
+  schedule:
+    - cron: "7 * * * *"  # error.every_minutes, a few minutes past the hour (runs at :00 are delayed most)
+  workflow_dispatch:
+    inputs:
+      instance:
+        description: "Only check this instance (leave blank for all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# Steps in a container default to sh; the platform-agents commands expect bash.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  detect:
+    name: detect (no Claude)
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-detector
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    outputs:
+      instances: ${{ steps.detect.outputs.tools }}
+      context: ${{ steps.detect.outputs.context }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+
+      - id: detect
+        name: Check each enabled instance for errors
+        env:
+          ONLY_TOOL: ${{ inputs.instance }}
+        run: pa detect
+
+      # Fails the run (so it shows red) after the outputs are set, so instances whose check worked still get fixed.
+      - name: Fail if any check broke
+        if: steps.detect.outputs.failed == '1'
+        run: exit 1
+
+  fix:
+    name: fix (${{ matrix.instance }})
+    needs: detect
+    if: ${{ !cancelled() && needs.detect.outputs.instances != '' && needs.detect.outputs.instances != '[]' }}
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-agent
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        instance: ${{ fromJSON(needs.detect.outputs.instances) }}
+    concurrency:
+      group: platform-agents-error-${{ matrix.instance }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      # The repo's own GitHub App: its token pushes branches and opens PRs, so the checks run on them.
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ vars.PA_APP_ID }}
+          private-key: ${{ secrets.PA_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+
+      - name: Guardrails, then Claude
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PA_BOT_NAME: ${{ steps.app.outputs.app-slug }}[bot]
+          PA_MODEL_SECRET: ${{ secrets.PA_MODEL_SECRET }}
+          CONTEXT: ${{ needs.detect.outputs.context }}
+          INSTANCE: ${{ matrix.instance }}
+        run: pa run error-triage --task fix --instances "$INSTANCE"

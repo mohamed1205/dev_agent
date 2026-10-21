@@ -1,0 +1,175 @@
+name: platform-agents-requests
+
+# Installed by `pa install`; `pa upgrade` rewrites it. Change behaviour through .platform-agents/, not here.
+#
+# Everything people ask the agents for:
+#   - a Pipeline request issue, and the requester's answers to the builder's questions
+#   - an Ask the platform agents issue, and @claude follow-ups on it
+#   - @claude on an agent PR (a question gets a reply; a change request gets a commit and a reply)
+#   - the checks failing on a pipeline PR (the builder fixes it, twice at most), or only the unit tests
+#     failing on an agent's PR (the CI/CD agent fixes them, twice at most)
+#   - the checks passing on a builder or error-agent PR that misses tests or deployment changes (the
+#     CI/CD agent adds them to that PR)
+# gate:    no Claude, no cloud. Decides whether the event is a job for an agent (members only, never bots).
+#          For a passing PR it reads the PR's files (never runs them) to see what's missing.
+# context: no Claude. Signs in as the detector (environment platform-agents-detector) for environment summaries.
+# run:     signs in as the agent (environment platform-agents-agent). Guardrails first; Claude only if they pass.
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: [platform-agents-checks]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: "pipeline-builder, error-triage, platform-ask, governance or cicd"
+        required: true
+        type: choice
+        options: [pipeline-builder, error-triage, platform-ask, governance, cicd]
+      task:
+        description: "request, answer, conversation, ci-fix (builder); conversation (error-triage, governance); ask (platform-ask); companion, repair, conversation (cicd)"
+        required: true
+      number:
+        description: Issue or PR number
+        required: true
+      instances:
+        description: "Instances to use (space-separated; blank for the agent's usual ones)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# Steps in a container default to sh; the platform-agents commands expect bash.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    name: gate (no Claude)
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      agent: ${{ steps.gate.outputs.agent }}
+      task: ${{ steps.gate.outputs.task }}
+      number: ${{ steps.gate.outputs.number }}
+      instances: ${{ steps.gate.outputs.instances }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_AGENT: ${{ inputs.agent }}
+          INPUT_TASK: ${{ inputs.task }}
+          INPUT_NUMBER: ${{ inputs.number }}
+          INPUT_INSTANCES: ${{ inputs.instances }}
+        run: pa gate
+
+  context:
+    name: context (no Claude)
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-detector
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    outputs:
+      context: ${{ steps.context.outputs.context }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+      - id: context
+        env:
+          AGENT: ${{ needs.gate.outputs.agent }}
+          INSTANCES: ${{ needs.gate.outputs.instances }}
+        run: |
+          read -ra names <<<"$INSTANCES"
+          context=$(pa context "$AGENT" "${names[@]}" | tail -1)
+          echo "context=$context" >> "$GITHUB_OUTPUT"
+
+  run:
+    name: "${{ needs.gate.outputs.agent }} (${{ needs.gate.outputs.task }} #${{ needs.gate.outputs.number }})"
+    needs: [gate, context]
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-agent
+    timeout-minutes: 60
+    concurrency:
+      group: platform-agents-requests-${{ needs.gate.outputs.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ vars.PA_APP_ID }}
+          private-key: ${{ secrets.PA_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+
+      # The failing tests' report from the checks run that started this one (test names, outcomes,
+      # short messages; tests see only the repo, so it holds no data). Scanned for credentials before Claude.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        if: ${{ github.event_name == 'workflow_run' && needs.gate.outputs.task == 'repair' }}
+        continue-on-error: true
+        with:
+          name: pa-test-report
+          path: .agent-tmp/cicd
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Guardrails, then Claude
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PA_BOT_NAME: ${{ steps.app.outputs.app-slug }}[bot]
+          PA_MODEL_SECRET: ${{ secrets.PA_MODEL_SECRET }}
+          CONTEXT: ${{ needs.context.outputs.context }}
+          AGENT: ${{ needs.gate.outputs.agent }}
+          TASK: ${{ needs.gate.outputs.task }}
+          NUMBER: ${{ needs.gate.outputs.number }}
+          INSTANCES: ${{ needs.gate.outputs.instances }}
+        run: |
+          if [[ -f .agent-tmp/cicd/pa-test-report.json ]]; then export PA_TASK_INPUT=.agent-tmp/cicd/pa-test-report.json; fi
+          pa run "$AGENT" --task "$TASK" --number "$NUMBER" --instances "$INSTANCES"

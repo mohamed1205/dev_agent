@@ -1,0 +1,41 @@
+# How the platform agents run in this repo. Change it through a normal PR.
+
+# How Claude Code reaches Claude: a model module from the product (modules/models/). `anthropic` is
+# the Anthropic API and works with any cloud; the secret PA_MODEL_SECRET (in the
+# platform-agents-agent environment) holds its API key.
+model:
+  provider: anthropic
+
+# The branch PRs go to.
+default_branch: main
+
+# Per-agent overrides of the product's defaults. Leave a setting out to keep the default.
+#   model           a pinned model ID (never an alias like "opus", so behaviour doesn't change by itself)
+#   effort          low | medium | high
+#   max_turns       turns per run before it stops
+#   max_budget_usd  spending limit per run
+agents:
+  error-triage: {}
+  pipeline-builder: {}
+  platform-ask: {}
+  governance: {}
+
+# The governance agent (daily: access-denied alerting, access review, lineage, business rules, column names).
+#   mention          per task, the GitHub users or teams to @mention on its PRs and issues; the code
+#                    owners of governance/ are asked to review anyway
+#   remind_days      how often to remind about a proposed change nobody has acted on
+#   business_logic   the business rules file the pipelines are checked against (missing or only
+#                    comments: the check is skipped)
+#   columns_per_run  at most this many new columns named per instance per run
+#   internal_domains your own email domains; principals from any other domain are flagged external
+governance:
+  mention:
+    access: ["@mohamed1205"]
+    alerting: []
+    rules: []
+    columns: []
+    lineage: []
+  remind_days: 7
+  business_logic: business_logic.md
+  columns_per_run: 100
+  internal_domains: [gmail.com]

@@ -1,0 +1,158 @@
+name: platform-agents-governance
+
+# Installed by `pa install`; `pa upgrade` rewrites it. Change behaviour through .platform-agents/, not here.
+#
+# The daily governance run. Every task works from metadata only, and every change is a PR (or, for
+# access denials on platforms without alerting of their own, an issue) for a person to decide.
+#   detect:  no Claude. Signs in as the detector (environment platform-agents-detector), collects the
+#            metadata the packs name (access, schemas, alerting state) and works out which tasks have
+#            work: alerting, access, lineage, rules, columns. Nothing changed means no Claude and no cost.
+#   run:     one Claude run per task with work, signed in as the agent (environment
+#            platform-agents-agent), guardrails first.
+#   rebuild: no Claude. Regenerates lineage, the weak-points report and baselines, as one PR.
+# Every job runs the platform-agents image at the version in the PA_VERSION variable.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"  # daily, early morning UTC
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Only this task (alerting, access, lineage, rules, columns); blank for all"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# Steps in a container default to sh; the platform-agents commands expect bash.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  detect:
+    name: detect (no Claude)
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-detector
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      issues: read
+      pull-requests: read
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    outputs:
+      work: ${{ steps.detect.outputs.work }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+
+      - id: detect
+        name: Collect metadata and work out the day's tasks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ONLY_TASK: ${{ inputs.task }}
+          PA_GOV_DIR: pa-governance
+        run: pa govern detect
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: governance-detect
+          path: pa-governance/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  run:
+    name: "${{ matrix.item.task }} (${{ matrix.item.key }})"
+    needs: detect
+    if: ${{ !cancelled() && needs.detect.outputs.work != '' && needs.detect.outputs.work != '[]' }}
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-agent
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        item: ${{ fromJSON(needs.detect.outputs.work) }}
+    concurrency:
+      group: platform-agents-governance-${{ matrix.item.key }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ vars.PA_APP_ID }}
+          private-key: ${{ secrets.PA_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: governance-detect
+          path: .agent-tmp/governance
+
+      - name: Guardrails, then Claude
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PA_BOT_NAME: ${{ steps.app.outputs.app-slug }}[bot]
+          PA_MODEL_SECRET: ${{ secrets.PA_MODEL_SECRET }}
+          TASK: ${{ matrix.item.task }}
+          INSTANCES: ${{ matrix.item.instances }}
+          PA_TASK_INPUT: .agent-tmp/governance/work/${{ matrix.item.key }}.json
+        run: |
+          CONTEXT=$(cat .agent-tmp/governance/context.json) pa run governance --task "$TASK" --instances "$INSTANCES"
+
+  rebuild:
+    name: rebuild (no Claude)
+    needs: detect
+    if: ${{ !cancelled() && needs.detect.result == 'success' }}
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-agent
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ vars.PA_APP_ID }}
+          private-key: ${{ secrets.PA_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: governance-detect
+          path: .agent-tmp/governance
+
+      - name: Regenerate lineage, the report and baselines; open or update the PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PA_BOT_NAME: ${{ steps.app.outputs.app-slug }}[bot]
+        run: pa govern rebuild

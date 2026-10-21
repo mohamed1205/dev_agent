@@ -1,0 +1,85 @@
+name: platform-agents-checks
+
+# Installed by `pa install`; `pa upgrade` rewrites it. Make all three jobs required status checks on the
+# default branch.
+#
+#   validate     static checks: settings, policies, pipeline specs, where pipeline code reads and
+#                writes, credentials, scope of agent PRs, tests and deployment files. Never runs
+#                pipeline code.
+#   tool checks  checks that run code, e.g. importing every DAG on the instance's Airflow version.
+#                No write token and no cloud sign-in here, so code in a PR can't reach anything.
+#   unit tests   the repo's tests: SQL steps offline on made-up rows, DAGs and Python with pytest. No
+#                write token, no cloud sign-in, no secrets, sockets blocked. Its report (no data: tests
+#                see only the repo) is what the CI/CD agent reads to fix failing tests.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Steps in a container default to sh; the platform-agents commands expect bash.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 10
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - env:
+          PA_PR_BRANCH: ${{ github.head_ref }}
+          PA_PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: pa check validate
+
+  tool-checks:
+    name: tool checks
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 30
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+      - run: pa check tools
+
+  unit-tests:
+    name: unit tests
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 30
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+      - env:
+          PA_TEST_REPORT: pa-test-report.json
+        run: pa check tests
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: pa-test-report
+          path: pa-test-report.json
+          retention-days: 7
+          if-no-files-found: ignore
