@@ -2,7 +2,8 @@ name: platform-agents-error
 
 # Installed by `pa install`; `pa upgrade` rewrites it. Change behaviour through .platform-agents/, not here.
 #
-# The hourly error check, then a fix PR for each instance with errors.
+# The error check (every error.every_minutes in config.yaml; `pa upgrade` writes the schedule below),
+# then a fix PR for each instance with errors or with tables that stopped updating.
 #   detect: no Claude. Signs in as the detector identity (GitHub environment platform-agents-detector).
 #   fix:    signs in as the agent identity (environment platform-agents-agent), which can read
 #           metadata but never data. The guardrails run first; Claude starts only if all of them pass.
@@ -10,7 +11,7 @@ name: platform-agents-error
 
 on:
   schedule:
-    - cron: "7 * * * *"  # hourly, a few minutes past the hour (runs at :00 are delayed most)
+    - cron: "7 * * * *"  # error.every_minutes, a few minutes past the hour (runs at :00 are delayed most)
   workflow_dispatch:
     inputs:
       instance:
@@ -44,7 +45,9 @@ jobs:
       instances: ${{ steps.detect.outputs.tools }}
       context: ${{ steps.detect.outputs.context }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
 
       - id: detect
         name: Check each enabled instance for errors
@@ -83,12 +86,12 @@ jobs:
     steps:
       # The repo's own GitHub App: its token pushes branches and opens PRs, so the checks run on them.
       - id: app
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
         with:
           app-id: ${{ vars.PA_APP_ID }}
           private-key: ${{ secrets.PA_APP_PRIVATE_KEY }}
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           token: ${{ steps.app.outputs.token }}
           fetch-depth: 0

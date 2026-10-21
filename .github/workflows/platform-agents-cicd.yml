@@ -1,0 +1,137 @@
+name: platform-agents-cicd
+
+# Installed by `pa install`; `pa upgrade` rewrites it. Change behaviour through .platform-agents/, not here.
+#
+# The CI/CD agent's upkeep: tests and deployment files kept in step after people merge changes. (On the
+# builder's and the error agent's PRs, the requests workflow starts it before the merge instead.)
+#   detect:  no Claude. Signs in as the detector (environment platform-agents-detector) for the
+#            environment summaries (where code is deployed, deployment triggers) and works out which tasks
+#            have work: tests (missing, or for things that are gone), deploy (files no deployment file
+#            copies, entries for paths that are gone), repair (tests failing on the default branch).
+#            Nothing to do means no Claude and no cost.
+#   run:     one Claude run per task with work, in environment platform-agents-agent. The CI/CD agent
+#            signs in to no platform: it has no cloud identity at all. Guardrails check the repo first.
+# Every job runs the platform-agents image at the version in the PA_VERSION variable.
+
+on:
+  workflow_run:
+    workflows: [platform-agents-checks]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "41 5 * * 1"  # weekly, Monday early morning UTC
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Only this task (tests, deploy, repair); blank for all"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# Steps in a container default to sh; the platform-agents commands expect bash.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  detect:
+    name: detect (no Claude)
+    # After a merge: only the checks run on the default branch's own push, never a PR's.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push' }}
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-detector
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      issues: read
+      pull-requests: read
+      actions: read
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    outputs:
+      work: ${{ steps.detect.outputs.work }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        if: ${{ github.event_name == 'workflow_run' }}
+        continue-on-error: true
+        with:
+          name: pa-test-report
+          path: pa-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - id: detect
+        name: Work out what tests and deployment files need
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ONLY_TASK: ${{ inputs.task }}
+          PA_CICD_DIR: pa-cicd
+          PA_TEST_REPORT: pa-report/pa-test-report.json
+        run: pa cicd detect
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: cicd-detect
+          path: pa-cicd/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  run:
+    name: "${{ matrix.item.task }}"
+    needs: detect
+    if: ${{ !cancelled() && needs.detect.outputs.work != '' && needs.detect.outputs.work != '[]' }}
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-agent
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        item: ${{ fromJSON(needs.detect.outputs.work) }}
+    concurrency:
+      group: platform-agents-cicd-${{ matrix.item.key }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ vars.PA_APP_ID }}
+          private-key: ${{ secrets.PA_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: cicd-detect
+          path: .agent-tmp/cicd
+
+      - name: Guardrails, then Claude
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PA_BOT_NAME: ${{ steps.app.outputs.app-slug }}[bot]
+          PA_MODEL_SECRET: ${{ secrets.PA_MODEL_SECRET }}
+          TASK: ${{ matrix.item.task }}
+          PA_TASK_INPUT: .agent-tmp/cicd/work/${{ matrix.item.key }}.json
+        run: |
+          CONTEXT=$(cat .agent-tmp/cicd/context.json) pa run cicd --task "$TASK"
