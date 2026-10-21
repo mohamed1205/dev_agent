@@ -12,5 +12,3 @@ platforms:
       table: atlantean-land-415108:agent_canary.canary # Canary BigQuery table, <project>:<dataset>.<table>
       object: gs://atlantean-land-415108-agent-canary/canary.txt # Canary Cloud Storage object, gs://<bucket>/<object>
       secret: projects/atlantean-land-415108/secrets/agent-canary # Canary secret, projects/<project>/secrets/<name>
-    # optional: governance.include_ancestors: ...  # true to read the folders' and organization's IAM policies too, for roles inherited from above the project (the detector needs getIamPolicy there)
-    # optional: governance.lineage_locations: ...  # Knowledge Catalog lineage locations to read, e.g. [eu]; the detector needs roles/datalineage.viewer. Leave unset to use only the repo's lineage.
