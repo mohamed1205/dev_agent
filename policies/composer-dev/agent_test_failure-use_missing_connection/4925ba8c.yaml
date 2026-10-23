@@ -1,0 +1,62 @@
+id: composer-dev-4925ba8c
+tool: composer-dev
+created_at: "2026-10-23T11:50:20Z"
+detected:
+  account: atlantean-land-415108
+  environment: composer-agent
+  resource: agent_test_failure/use_missing_connection
+  error_signature: "AirflowNotFoundException: The conn_id `agent_test_missing_conn` isn't defined"
+  first_seen: "2026-10-23T11:06:06.714864253Z"
+  last_seen: "2026-10-23T11:06:06.923931360Z"
+  occurrences: 2
+  query: >-
+    resource.type="cloud_composer_environment"
+    AND resource.labels.environment_name="composer-agent"
+    AND severity>=ERROR
+    AND NOT textPayload:"Returned value was"
+  samples:
+    - "airflow.exceptions.AirflowNotFoundException: The conn_id `agent_test_missing_conn` isn't defined"
+    - "File \"/home/airflow/gcs/dags/agent_test_failure.py\", line 9, in use_missing_connection: BaseHook.get_connection(\"agent_test_missing_conn\")"
+    - "Marking task as FAILED. dag_id=agent_test_failure, task_id=use_missing_connection, run_id=manual__2026-10-23T11:06:04+00:00"
+context:
+  tool_version: composer-3-airflow-2.11.1-build.21
+  related_versions:
+    apache-airflow: "2.11.1"
+  docs_consulted: []
+  checks:
+    - check: 'pa logs composer-dev (labels.workflow="agent_test_failure", labels."task-id"="use_missing_connection", labels."try-number"="1")'
+      result: 'Try 1 of 1 ("Starting attempt 1 of 1"); the task raised AirflowNotFoundException at agent_test_failure.py line 9 and was marked FAILED; no retries configured.'
+    - check: "Environment summary: secrets_backend"
+      result: "null. Connections are not read from Secret Manager, so the Secret Manager name check does not apply; Airflow's own connection store is off-limits to the agent."
+    - check: 'gcloud storage objects list "gs://us-central1-composer-agent-00a7fcf7-bucket/dags/agent_test_failure.py" --format=json'
+      result: "Deployed file exists: 435 bytes, md5 MIgb/e8AGKVtt8krm5iD7g==, uploaded 2026-10-23T11:00:34Z."
+    - check: "ls dags/ in this repo (repo_path)"
+      result: "dags/agent_test_failure.py is not in the repo (dags/ holds only .gitkeep), so the hash comparison cannot be done; the deployed file was put in the bucket directly."
+    - check: "Fetch the Airflow 2.11.1 connection docs"
+      result: "refused (web access is blocked for the agent in this run); no doc page was read."
+root_cause: >-
+  Task use_missing_connection in DAG agent_test_failure calls
+  BaseHook.get_connection("agent_test_missing_conn") (agent_test_failure.py line 9). No connection with
+  that id is defined in the environment. With no secrets backend configured, Airflow looks the id up
+  in AIRFLOW_CONN_* environment variables and its own metadata database, finds nothing, and raises
+  AirflowNotFoundException. The task has no retries, so the first failure was final and DAG run
+  manual__2026-10-23T11:06:04+00:00 was marked failed. The DAG file is deployed to the bucket but is
+  not in this repo, so the fix cannot be made here. The DAG and connection names suggest this may be a
+  deliberate test failure; the agent cannot confirm that.
+remediation:
+  type: manual
+  summary: >-
+    Either define Airflow connection agent_test_missing_conn in composer-agent, or change or remove the
+    get_connection call in the deployed DAG file. The DAG is not in this repo.
+  files_changed: []
+  manual_steps:
+    - "Decide whether DAG agent_test_failure is a deliberate test. If it is, no fix is needed: pause or delete it (gs://us-central1-composer-agent-00a7fcf7-bucket/dags/agent_test_failure.py) and close this PR with a note."
+    - "If the task should succeed: in the Airflow UI of composer-agent (us-central1, project atlantean-land-415108), open Admin > Connections and check whether a connection with id agent_test_missing_conn exists (look for near-misses such as a typo, or - instead of _)."
+    - "If it does not exist, create connection agent_test_missing_conn (with the type and host the task needs) in the Airflow UI, following your team's practice. The agent cannot and did not do this."
+    - "If the DAG should use a different, existing connection, change line 9 of agent_test_failure.py to that conn_id. Because the file is not in this repo, consider adding it to dags/ so future fixes can be proposed as code changes and the deployed copy can be checked against the repo."
+    - "Trigger agent_test_failure again and confirm use_missing_connection succeeds."
+risk: medium
+rollback: >-
+  This PR only adds a policy record. If a connection was created, delete it in Admin > Connections;
+  if the DAG file was changed, re-upload the previous version (generation 1792753234316756 in the bucket).
+history: []
