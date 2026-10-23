@@ -1,0 +1,81 @@
+id: agent-test-orders-daily
+title: Daily order CSV files into BigQuery
+description: Loads each day's order CSV files from Cloud Storage into the raw BigQuery table dev_raw.agent_test_orders, one partition per load date, replaced on every run so reruns are safe.
+owner: data-platform
+request: https://github.com/mohamed1205/dev_agent/issues/6
+created_at: "2026-10-23T00:00:00Z"
+orchestrator: composer-dev
+schedule: "0 6 * * *"
+timezone: UTC
+sources:
+  - instance: gcs-dev
+    object: gs://atlantean-land-415108-dev-data/agent-test/orders/*/*.csv
+    format: csv
+    notes: Comma-separated with a header row. One folder per day, YYYYMMDD. Columns order_id (string), amount (numeric). No personal or confidential data, per the request.
+targets:
+  - instance: bigquery-dev
+    object: atlantean-land-415108.dev_raw.agent_test_orders
+    write_mode: append
+    partition_by: _PARTITIONDATE
+    notes: Raw layer. Each run replaces its own day's partition (WRITE_TRUNCATE on agent_test_orders$YYYYMMDD), so a rerun never duplicates rows.
+steps:
+  - id: create_tables
+    kind: bigquery_sql
+    runs_on: bigquery-dev
+    file: dags/sql/agent_test_orders_daily/create_tables.sql
+    inputs: []
+    outputs: [atlantean-land-415108.dev_raw.agent_test_orders]
+  - id: wait_for_files
+    kind: wait_for_files
+    runs_on: gcs-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/agent-test/orders/{{ ds_nodash }}/"]
+    outputs: []
+    notes: Deferrable sensor; fails the run if the day's folder hasn't appeared within 6 hours (by 12:00 UTC).
+  - id: load_files
+    kind: load_files
+    runs_on: bigquery-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/agent-test/orders/{{ ds_nodash }}/*.csv"]
+    outputs: [atlantean-land-415108.dev_raw.agent_test_orders]
+  - id: check_rows
+    kind: check
+    runs_on: bigquery-dev
+    inputs: [atlantean-land-415108.dev_raw.agent_test_orders]
+    outputs: []
+    notes: Fails the run if the day's partition is empty.
+artifacts:
+  - pipelines/agent-test-orders-daily/pipeline.yaml
+  - dags/agent_test_orders_daily.py
+  - dags/sql/agent_test_orders_daily/create_tables.sql
+manual_steps:
+  - "Check that no DAG file named agent_test_orders_daily.py is already deployed in gs://us-central1-composer-agent-00a7fcf7-bucket/dags/ (the builder's listing of the DAG bucket was refused)."
+  - "Deploy: gcloud storage cp dags/agent_test_orders_daily.py gs://us-central1-composer-agent-00a7fcf7-bucket/dags/ and gcloud storage cp -r dags/sql/agent_test_orders_daily gs://us-central1-composer-agent-00a7fcf7-bucket/dags/sql/, then unpause the DAG agent_test_orders_daily in the Airflow UI."
+assumptions:
+  - "Each run loads the folder of its logical date ({{ ds_nodash }}): the run at 06:00 UTC on day D+1 loads folder D, the day that just ended. If folder D should be loaded at 06:00 on day D instead, the DAG must use the data interval end date."
+  - Day D's files are complete by 06:00 UTC on day D+1; the sensor waits up to 6 hours more before failing the run.
+  - "The target table is the one the request names, in dev_raw (the only dataset the bigquery-dev instance allows), rather than the conventions' raw_<domain> dataset."
+  - "The conventions' raw partitioning (ingestion_date) is implemented as ingestion-time daily partitioning (_PARTITIONDATE): the files carry no date column, and each run writes its own date's partition."
+  - "Column types come from the request: order_id STRING, amount NUMERIC. A value that isn't a valid NUMERIC (at most 29 integer digits and 9 decimal places) fails the load rather than being dropped."
+  - "Row provenance: the table is loaded straight from the files, so it keeps the files' columns; its partition (the load date) identifies the source folder."
+  - "Owner is the conventions' default (data-platform); the request named none."
+context:
+  tool_versions:
+    composer-dev: composer-3-airflow-2.11.1-build.21
+  docs_consulted: []
+  checks:
+    - check: bq show --format=prettyjson atlantean-land-415108:dev_raw
+      result: Dataset exists, location US (matches the instance's location).
+    - check: bq show --format=prettyjson atlantean-land-415108:dev_raw.agent_test_orders
+      result: Not found; the create_tables step creates it.
+    - check: bq ls --format=prettyjson atlantean-land-415108:dev_raw
+      result: One table, orders; no name clash.
+    - check: gcloud storage ls "gs://atlantean-land-415108-dev-data/agent-test/orders/"
+      result: One folder per day, YYYYMMDD (20261023/ so far).
+    - check: gcloud storage ls "gs://atlantean-land-415108-dev-data/agent-test/orders/20261023/"
+      result: One file, orders_test.csv.
+    - check: gcloud storage buckets describe gs://atlantean-land-415108-dev-data --format="json(location,storage_class)"
+      result: Bucket location US, same as the dataset.
+    - check: gcloud projects get-iam-policy atlantean-land-415108 (roles of dsc-poc-composer@atlantean-land-415108.iam.gserviceaccount.com)
+      result: roles/bigquery.admin, roles/composer.admin, roles/composer.worker, roles/secretmanager.admin, roles/storage.admin; enough to read the bucket and write the table, so no grant is needed.
+    - check: gcloud storage objects list "gs://us-central1-composer-agent-00a7fcf7-bucket/dags/"
+      result: Refused (403 for the agent's identity); whether a DAG with this name is already deployed is unknown.
+history: []
