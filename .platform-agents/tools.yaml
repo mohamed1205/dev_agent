@@ -19,7 +19,7 @@ instances:
     agents: [error-triage, pipeline-builder, governance]
     account: atlantean-land-415108  # GCP project ID
     params:
-      environment: dev-composer  # Composer environment name
+      environment: composer-agent  # Composer environment name
       location: us-central1  # the environment's region
       airflow_version: 2.11.1  # Airflow version the environment runs. CI installs it to test that DAGs import.
       # repo_path: ...  # optional (default dags): folder in the dev repo that holds this environment's DAGs (deployed to its DAG bucket)
