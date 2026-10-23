@@ -18,7 +18,7 @@ with DAG(
             "query": {
                 "query": (
                     "CREATE OR REPLACE TABLE `atlantean-land-415108.dev_raw.orders_summary` AS "
-                    "SELECT order_id, SUM(amout) AS total_amount "
+                    "SELECT order_id, SUM(amount) AS total_amount "
                     "FROM `atlantean-land-415108.dev_raw.orders` "
                     "GROUP BY order_id"
                 ),
