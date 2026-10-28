@@ -1,5 +1,5 @@
 # How the platform agents run in this repo. Change it through a normal PR.
-# 
+#
 # Where this repo is hosted, and so how the agents open PRs, read issues and run in its CI: a code host
 # module from the product (modules/hosts/). `pa install --host` writes it; `pa upgrade` writes that host's
 # workflows.
