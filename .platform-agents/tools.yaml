@@ -39,3 +39,40 @@ instances:
     account: atlantean-land-415108 # GCP project ID
     params:
       buckets: [atlantean-land-415108-dev-data] # the buckets pipelines may read from or write to (a list). The pipeline checks reject code that names any other bucket.
+  - name: script-dev
+    tool: script
+    enabled: true
+    agents: [cicd]
+    params:
+      files: [deploy/deploy_dags.sh] # the deployment files, as paths or globs from the repo root (a list), e.g. [deploy/deploy.sh, Makefile]
+      deploys: {composer-dev: 'gs://us-central1-composer-agent-00a7fcf7-bucket/dags'} # which orchestrator instances these files deploy, and where each one's code goes (a map), e.g. {my-orchestrator: "<where its code is copied to>"}
+  - name: dataplex-dev
+    tool: dataplex
+    enabled: true
+    agents: [governance, error-triage]
+    account: atlantean-land-415108 # GCP project ID
+    params:
+      locations: [us, us-central1] # the regions with the project's data quality scans and its tables' catalog entries (a list), e.g. [europe-west1]
+      # lineage_locations: ...  # optional (default []): where the catalog's lineage is kept (a list), e.g. [eu]. The detector needs roles/datalineage.viewer. Leave it empty to use only the repo's lineage.
+      # glossary_locations: ...  # optional (default ['global']): where the business glossaries are (a list)
+      # quality_lookback_days: ...  # optional (default 7): how many days back the quality scans' results are read
+
+      lineage_locations:
+        - us
+  - name: sdp-dev
+    tool: sdp
+    enabled: true
+    agents: [governance, error-triage]
+    account: atlantean-land-415108 # GCP project ID
+    params:
+      locations: [global] # where discovery keeps its data profiles (a list), e.g. [global] or [europe-west1]
+  - name: flyway-dev
+    tool: flyway
+    enabled: true
+    agents: [cicd]
+    params:
+      warehouse: bigquery-dev # the warehouse instance whose tables these are (its name in this file), e.g. my-warehouse
+      # dir: ...  # optional: the folder holding the table definitions and migrations/ (default: the warehouse pack's tables_dir, e.g. bigquery_tables for BigQuery)
+      # history_schema: ...  # optional: the dataset or schema where Flyway keeps flyway_schema_history (Flyway's defaultSchema); for the suggested flyway.toml
+
+      history_schema: dev_raw
