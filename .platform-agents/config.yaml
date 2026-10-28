@@ -1,33 +1,140 @@
 # How the platform agents run in this repo. Change it through a normal PR.
-
+# 
+# Where this repo is hosted, and so how the agents open PRs, read issues and run in its CI: a code host
+# module from the product (modules/hosts/). `pa install --host` writes it; `pa upgrade` writes that host's
+# workflows.
+host: github
 # How Claude Code reaches Claude: a model module from the product (modules/models/). `anthropic` is
+
 # the Anthropic API and works with any cloud; the secret PA_MODEL_SECRET (in the
+
 # platform-agents-agent environment) holds its API key.
 model:
   provider: anthropic
 # The branch PRs go to.
 default_branch: main
 # Per-agent overrides of the product's defaults. Leave a setting out to keep the default.
+
 #   model           a pinned model ID (never an alias like "opus", so behaviour doesn't change by itself)
+
 #   effort          low | medium | high
+
 #   max_turns       turns per run before it stops
+
 #   max_budget_usd  spending limit per run
 agents:
   error-triage: {}
   pipeline-builder: {}
   platform-ask: {}
   governance: {}
+  cicd: {}
+# The error agent (error-triage).
+
+#   every_minutes            how often the error check runs: 15, 20, 30, 60, 120, 180, 240, 360, 720 or
+
+#                            1440. The error workflow's schedule is written from it: after changing it, run
+
+#                            `pa upgrade` and commit the workflow in the same PR (`pa check validate` warns
+
+#                            until you do). Each check looks back this long plus 10 minutes.
+
+#   max_signatures           at most this many errors handled per instance per run (1–10); the rest wait
+
+#                            for the next run
+
+#   fix_grace_hours          an error seen again less than this long after its fix merged is taken as "not
+
+#                            deployed yet", not as a fix that didn't hold
+
+#   freshness_grace_minutes  how long after a pipeline's scheduled time its tables may stay unchanged
+
+#                            before they count as stale (tables that stopped updating)
+error:
+  every_minutes: 60
+  max_signatures: 3
+  fix_grace_hours: 24
+  freshness_grace_minutes: 120
+# The agents' pull requests.
+
+#   refused_ignore_days  after you close an error-agent or governance PR without merging it, its error or
+
+#                        finding is ignored for this many days; then the agent may try again, after reading
+
+#                        why you closed it. Close it with the label agent-ignore to stop it for good.
+
+#   delete_branches      delete an agent's branch (agent/, builder/, governance/, cicd/) once its PR is
+
+#                        merged or closed; people's branches are never touched
+prs:
+  refused_ignore_days: 5
+  delete_branches: true
+# The capacity check (detector, no Claude; then the error agent): resource usage (CPU, memory, disk,
+
+# workers, slots, storage) as the packs measure it, and a forecast of when each fills.
+
+#   enabled        off until you turn it on (the detector role needs monitoring.timeSeries.list first)
+
+#   every_minutes  how often it measures: 15, 20, 30, 60, 120, 180, 240, 360, 720 or 1440, its own schedule.
+
+#                  After changing it, run `pa upgrade` and commit the capacity workflow.
+
+#   threshold      the share in use (0.5 to 0.99) that opens a PR with the steps to scale
+
+#   min_points     no forecast before this many measurements (at least 10)
+
+#   history_days   measurements kept, and the models train on (31 at most: the latest month)
+
+#   horizon_days   how far ahead it forecasts (30 at most); a resource forecast to fill sooner gets a PR
+capacity:
+  enabled: false
+  every_minutes: 30
+  threshold: 0.8
+  min_points: 10
+  history_days: 31
+  horizon_days: 30
+# The repo audit (no Claude; then the pipeline builder and the governance agent): best practice and
+
+# security in what the agents didn't write. The first run reviews the whole repo; after that, every change
+
+# people make on the default branch. Each finding comes as a PR that explains it simply.
+
+#   enabled               off until you turn it on
+
+#   max_findings_per_run  at most this many findings per run; the rest wait for the next
+
+#   exclude               paths or globs never audited, e.g. [legacy/**]
+audit:
+  enabled: false
+  max_findings_per_run: 10
+  exclude: []
+# Scrubbing logs before an agent reads them (`pa logs`). Emails, phone and card numbers, IBANs, long
+
+# numbers, credentials and values in row-like output are always hidden.
+
+#   extra_patterns   your own regular expressions for values to hide too, e.g. your customer id format
+
+#                    ('\bCUST-[0-9]+\b'). Single-quote them.
+redaction:
+  extra_patterns: []
 # The governance agent (daily: access-denied alerting, access review, lineage, business rules, column names).
-#   mention          per task, the GitHub users or teams to @mention on its PRs and issues; the code
+
+#   mention          per task, the users or teams to @mention on its PRs and issues; the code
+
 #                    owners of governance/ are asked to review anyway
+
 #   remind_days      how often to remind about a proposed change nobody has acted on
+
 #   business_logic   the business rules file the pipelines are checked against (missing or only
+
 #                    comments: the check is skipped)
+
 #   columns_per_run  at most this many new columns named per instance per run
+
 #   internal_domains your own email domains; principals from any other domain are flagged external
 governance:
   mention:
-    access: ["@mohamed1205"]
+    access:
+      - '@mohamed1205'
     alerting: []
     rules: []
     columns: []
@@ -35,7 +142,33 @@ governance:
   remind_days: 7
   business_logic: business_logic.md
   columns_per_run: 100
-  internal_domains: [gmail.com]
+  internal_domains:
+    - gmail.com
+# The CI/CD agent (tests and deployment files, on agent PRs and after merges; no cloud identity).
+
+#   tests_dir          where tests live: Python tests anywhere in it, SQL tests in <tests_dir>/sql/<pipeline>/<step>.yaml,
+
+#                      and spec cases in <tests_dir>/spec/ (written from the spec without the code; only that
+
+#                      pass and people change them)
+
+#   require_tests      off | warn | error: what `pa check validate` does when a changed pipeline misses a
+
+#                      test the test policy asks for (warn to start; error once the agent has caught up)
+
+#   require_deploy     off | warn | error: the same, for a file no deployment file copies
+
+#   require_mutation   off | warn | gold | error: the same, for a test that misses a deliberate change to the
+
+#                      SQL or Python it tests; gold fails only for gold-layer steps and business-rule tests
+
+#   environments       the order deployments go in (the agent keeps it in deployment files)
+
+#   max_files_per_run  at most this many tests or deployment gaps per upkeep run
+
+#   mention            per task (tests, deploy, repair), the users or teams to @mention on its PRs
+
+#   remind_days        how often to remind about a deployment change nobody has made
 cicd:
   tests_dir: tests
   require_tests: warn
