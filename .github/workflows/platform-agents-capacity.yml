@@ -1,0 +1,138 @@
+name: platform-agents-capacity
+
+# Installed by `pa install`; `pa upgrade` rewrites it. Change behaviour through .platform-agents/, not here.
+#
+# The capacity check, when config.yaml says capacity.enabled: true (otherwise detect finds nothing to do).
+#   detect: no Claude. Signs in as the detector (environment platform-agents-detector), measures each
+#           instance's resources (the packs' capacity.usage_command), adds the points to the history the last
+#           run kept (artifact pa-capacity-state), forecasts when each resource fills, and works out which
+#           are over capacity.threshold or forecast to fill within capacity.horizon_days. It keeps the history
+#           and forecast.json (overwritten each run) as the artifact for the next run.
+#   run:    one Claude run per resource with work, signed in as the agent (environment
+#           platform-agents-agent), guardrails first: a PR with the steps for a person to scale it.
+# Every job runs the platform-agents image at the version in the PA_VERSION variable.
+
+on:
+  schedule:
+    - cron: "23-59/30 * * * *"  # capacity.every_minutes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Steps in a container default to sh; the platform-agents commands expect bash.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: platform-agents-capacity
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: detect (no Claude)
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-detector
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    outputs:
+      work: ${{ steps.detect.outputs.work }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+
+      - id: last
+        name: Find the last run's history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "run_id=$(pa host run last-success --workflow platform-agents-capacity.yml || true)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        if: ${{ steps.last.outputs.run_id != '' }}
+        continue-on-error: true
+        with:
+          name: pa-capacity-state
+          path: pa-capacity/state
+          run-id: ${{ steps.last.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - id: detect
+        name: Measure, forecast and work out what needs scaling
+        env:
+          PA_CAP_DIR: pa-capacity
+        run: pa capacity detect
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: pa-capacity-state
+          path: pa-capacity/state/
+          retention-days: 35
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: capacity-detect
+          path: |
+            pa-capacity/work/
+            pa-capacity/context.json
+          retention-days: 1
+          if-no-files-found: ignore
+
+  run:
+    name: "capacity (${{ matrix.item.key }})"
+    needs: detect
+    if: ${{ !cancelled() && needs.detect.outputs.work != '' && needs.detect.outputs.work != '[]' }}
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-agent
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        item: ${{ fromJSON(needs.detect.outputs.work) }}
+    permissions:
+      contents: read
+      id-token: write
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ vars.PA_APP_ID }}
+          private-key: ${{ secrets.PA_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: capacity-detect
+          path: .agent-tmp/capacity
+
+      - name: Guardrails, then Claude
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PA_BOT_NAME: ${{ steps.app.outputs.app-slug }}[bot]
+          PA_MODEL_SECRET: ${{ secrets.PA_MODEL_SECRET }}
+          INSTANCES: ${{ matrix.item.instances }}
+          PA_TASK_INPUT: .agent-tmp/capacity/work/${{ matrix.item.key }}.json
+        run: |
+          CONTEXT=$(cat .agent-tmp/capacity/context.json) pa run error-triage --task capacity --instances "$INSTANCES"

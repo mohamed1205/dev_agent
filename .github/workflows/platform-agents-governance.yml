@@ -3,10 +3,12 @@ name: platform-agents-governance
 # Installed by `pa install`; `pa upgrade` rewrites it. Change behaviour through .platform-agents/, not here.
 #
 # The daily governance run. Every task works from metadata only, and every change is a PR (or, for
-# access denials on platforms without alerting of their own, an issue) for a person to decide.
+# access denials on platforms without alerting of their own, failing quality checks and data a business
+# rule forbids, an issue) for a person to decide.
 #   detect:  no Claude. Signs in as the detector (environment platform-agents-detector), collects the
-#            metadata the packs name (access, schemas, alerting state) and works out which tasks have
-#            work: alerting, access, lineage, rules, columns. Nothing changed means no Claude and no cost.
+#            metadata the packs name (access, schemas, alerting state, the catalogs' outputs) and works
+#            out which tasks have work: alerting, access, lineage, rules, columns, quality, protection. Nothing
+#            changed means no Claude and no cost.
 #   run:     one Claude run per task with work, signed in as the agent (environment
 #            platform-agents-agent), guardrails first.
 #   rebuild: no Claude. Regenerates lineage, the weak-points report and baselines, as one PR.
@@ -18,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "Only this task (alerting, access, lineage, rules, columns); blank for all"
+        description: "Only this task (alerting, access, lineage, rules, columns, quality, protection); blank for all"
         required: false
         default: ""
 
