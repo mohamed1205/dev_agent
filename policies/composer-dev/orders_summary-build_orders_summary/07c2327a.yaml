@@ -10,10 +10,7 @@ detected:
   last_seen: "2026-10-23T12:21:54Z"
   occurrences: 1
   query: >-
-    resource.type="cloud_composer_environment"
-    AND resource.labels.environment_name="composer-agent"
-    AND severity>=ERROR
-    AND NOT textPayload:"Returned value was"
+    resource.type="cloud_composer_environment" AND resource.labels.environment_name="composer-agent" AND severity>=ERROR AND NOT textPayload:"Returned value was"
   samples:
     - "google.api_core.exceptions.BadRequest: 400 Unrecognized name: amout; Did you mean amount? at [1:96]; reason: invalidQuery, location: query (Location: US, Job ID: airflow_orders_summary_build_orders_summary_2026_10_23T12_21_37_00_00_0c7912650bc0aa6b6aca5ca5568f0067)"
     - "Failed to execute job 17 for task build_orders_summary (400 Unrecognized name: amout; Did you mean amount? at [1:96]; ...)"
@@ -22,7 +19,8 @@ context:
   tool_version: composer-3-airflow-2.11.1-build.21
   related_versions:
     apache-airflow-providers-google: "version shipped with composer-3-airflow-2.11.1-build.21 (not pinned in pypi_packages; exact version not confirmed)"
-  docs_consulted: []
+  docs_consulted:
+    - https://cloud.google.com/bigquery/docs/error-messages
   checks:
     - check: "bq show --schema --format=prettyjson atlantean-land-415108:dev_raw.orders"
       result: "Columns: order_id STRING, amount FLOAT. No column named amout; amount exists."
@@ -31,11 +29,7 @@ context:
     - check: "gcloud storage hash ./dags/orders_summary.py"
       result: "refused; the deployed copy could not be compared with the repo copy."
 root_cause: >-
-  The query in task build_orders_summary of DAG orders_summary (dags/orders_summary.py) computes
-  SUM(amout), but the source table atlantean-land-415108.dev_raw.orders has no column amout; the
-  column is named amount (FLOAT). BigQuery rejects the query with "Unrecognized name: amout" at
-  line 1, column 96, which is exactly where amout starts in the query string. The task has
-  retries=0, so the first failure failed the task and the DAG run.
+  The query in task build_orders_summary of DAG orders_summary (dags/orders_summary.py) computes SUM(amout), but the source table atlantean-land-415108.dev_raw.orders has no column amout; the column is named amount (FLOAT). BigQuery rejects the query with "Unrecognized name: amout" at line 1, column 96, which is exactly where amout starts in the query string. The task has retries=0, so the first failure failed the task and the DAG run.
 remediation:
   type: dag_code_change
   summary: "Fix the column name typo in the query, SUM(amout) -> SUM(amount)."

@@ -1,0 +1,155 @@
+name: platform-agents-audit
+
+# Installed by `pa install`; `pa upgrade` rewrites it. Change behaviour through .platform-agents/, not here.
+#
+# The repo audit, when config.yaml says audit.enabled: true (otherwise detect finds nothing to do): best
+# practice and security in what the agents didn't write. The first run reviews the whole repo; after that,
+# the default branch's commits no agent made. Each finding is explained in plain words, in a PR.
+#   detect:  no Claude. Reads the repo only (audit.py), with the last run's state (artifact pa-audit-state:
+#            the last commit audited, and files whose findings didn't fit). Then, for the instances with
+#            work, their filtered environment summaries, signed in as the detector (environment
+#            platform-agents-detector).
+#   run:     one Claude run per file with findings, by the agent that owns them (the pipeline builder for
+#            pipeline code and printed data, the governance agent for credentials and public access),
+#            signed in as the agent (environment platform-agents-agent), guardrails first.
+# Every job runs the platform-agents image at the version in the PA_VERSION variable.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "53 4 * * *"  # daily, early morning UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Steps in a container default to sh; the platform-agents commands expect bash.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: platform-agents-audit
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: detect (no Claude)
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-detector
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+      pull-requests: read
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    outputs:
+      work: ${{ steps.detect.outputs.work }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: last
+        name: Find the last run's state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "run_id=$(pa host run last-success --workflow platform-agents-audit.yml || true)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        if: ${{ steps.last.outputs.run_id != '' }}
+        continue-on-error: true
+        with:
+          name: pa-audit-state
+          path: pa-audit/state
+          run-id: ${{ steps.last.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - id: detect
+        name: Audit what the agents didn't write
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PA_AUDIT_DIR: pa-audit
+        run: |
+          pa host pr list --label audit --state all --limit 300 --fields number,state,body,updatedAt,mergedAt,closedAt,labels \
+            > pa-audit-prs.json 2> /dev/null || echo '[]' > pa-audit-prs.json
+          set -o pipefail
+          PA_AUDIT_PRS=pa-audit-prs.json pa audit detect | tee pa-audit-detect.log
+          names=$(sed -n 's/^audit work: //p' pa-audit-detect.log | tail -1 | jq -r '[.[].instances | select(. != "")] | unique | join(" ")')
+          if [[ -n "$names" ]]; then
+            read -ra list <<<"$names"
+            pa context pipeline-builder "${list[@]}" | tail -1 > pa-audit/context.json
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: pa-audit-state
+          path: pa-audit/state/
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: audit-detect
+          path: |
+            pa-audit/work/
+            pa-audit/context.json
+          retention-days: 1
+          if-no-files-found: ignore
+
+  run:
+    name: "${{ matrix.item.agent }} audit (${{ matrix.item.key }})"
+    needs: detect
+    if: ${{ !cancelled() && needs.detect.outputs.work != '' && needs.detect.outputs.work != '[]' }}
+    runs-on: ${{ fromJSON(vars.PA_RUNS_ON || '"ubuntu-latest"') }}
+    environment: platform-agents-agent
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        item: ${{ fromJSON(needs.detect.outputs.work) }}
+    permissions:
+      contents: read
+      id-token: write
+    container:
+      image: ${{ vars.PA_IMAGE }}:${{ vars.PA_VERSION }}
+      credentials:
+        username: ${{ vars.PA_REGISTRY_USER }}
+        password: ${{ secrets.PA_REGISTRY_TOKEN }}
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ vars.PA_APP_ID }}
+          private-key: ${{ secrets.PA_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: audit-detect
+          path: .agent-tmp/audit
+
+      - name: Guardrails, then Claude
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PA_BOT_NAME: ${{ steps.app.outputs.app-slug }}[bot]
+          PA_MODEL_SECRET: ${{ secrets.PA_MODEL_SECRET }}
+          AGENT: ${{ matrix.item.agent }}
+          INSTANCES: ${{ matrix.item.instances }}
+          PA_TASK_INPUT: .agent-tmp/audit/work/${{ matrix.item.key }}.json
+        run: |
+          CONTEXT=$(cat .agent-tmp/audit/context.json 2> /dev/null || echo '{}') pa run "$AGENT" --task audit --instances "$INSTANCES"
