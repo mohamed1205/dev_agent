@@ -86,3 +86,11 @@ instances:
     account: "897729105732" # AWS account ID
     params:
       buckets: [pa-demo-exports-897729105732] # the buckets pipelines may read from or write to
+  - name: deploy
+    tool: github-actions
+    enabled: true
+    agents: [cicd]
+    params:
+      files: [.github/workflows/deploy.yml]
+      deploys:
+        composer-dev: "gs://us-central1-composer-agent-76861d07-bucket/dags"
