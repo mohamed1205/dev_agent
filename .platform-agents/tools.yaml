@@ -52,7 +52,7 @@ instances:
     agents: [governance, error-triage]
     account: atlantean-land-415108 # GCP project ID
     params:
-      locations: [us, us-central1] # the regions with the project's data quality scans and its tables' catalog entries (a list), e.g. [europe-west1]
+      locations: [us-central1] # the regions with the project's data quality scans and its tables' catalog entries (a list), e.g. [europe-west1]
       # lineage_locations: ...  # optional (default []): where the catalog's lineage is kept (a list), e.g. [eu]. The detector needs roles/datalineage.viewer. Leave it empty to use only the repo's lineage.
       # glossary_locations: ...  # optional (default ['global']): where the business glossaries are (a list)
       # quality_lookback_days: ...  # optional (default 7): how many days back the quality scans' results are read
