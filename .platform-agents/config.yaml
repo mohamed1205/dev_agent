@@ -86,7 +86,7 @@ prs:
 
 #   horizon_days   how far ahead it forecasts (30 at most); a resource forecast to fill sooner gets a PR
 capacity:
-  enabled: false
+  enabled: true
   every_minutes: 30
   threshold: 0.8
   min_points: 10
