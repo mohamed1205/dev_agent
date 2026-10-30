@@ -1,0 +1,98 @@
+# Governance finding: dbuser:admin owns (administers) the gold schema dev.finance.
+# Written by the governance agent from metadata only. Nothing here has been applied.
+id: "741a9276"
+kind: existing_access
+group: redshift-dev
+created_at: "2026-10-30T17:11:29Z"
+summary: >-
+  The database user admin owns the gold-layer schema dev.finance in Redshift Serverless workgroup
+  default-workgroup (schema grants OWNER, ALTER, DROP). The owner can drop or alter anything in the schema,
+  and owns any table it creates there. The detect step held this back from the first baseline because it is
+  admin on gold. Merging the baseline PR does not approve it.
+subject:
+  principal: "dbuser:admin"
+  resource: "redshift://default-workgroup/dev.finance"
+  access: admin
+  via:
+    - "schema grant ALTER"
+    - "schema grant DROP"
+    - "schema grant OWNER"
+evidence:
+  - check: ".agent-tmp/governance/work/access-redshift-dev.json (detect step, first_run: true)"
+    result: >-
+      One hold row: dbuser:admin, redshift://default-workgroup/dev.finance, access admin, via schema grant
+      ALTER, DROP and OWNER, flags none, risky "admin on gold". Seven other rows were marked approve.
+  - check: ".agent-tmp/governance/raw/instances/redshift-dev/access.json (Redshift catalog grants)"
+    result: >-
+      Schema dev.finance: dbuser:admin holds OWNER, USAGE, CREATE, DROP and ALTER. dbuser:IAMR:composer-redshift
+      holds USAGE and CREATE. dbuser:IAMR:maint-detector holds USAGE. There is no PUBLIC grant. dbuser:admin is
+      also the owner of the staging schema dev.stg_finance and of the table dev.stg_finance.invoices. Those are
+      approve rows, not gold.
+  - check: ".agent-tmp/governance/raw/instances/redshift-dev/schema.json (live columns)"
+    result: >-
+      No tables or views are listed under dev.finance today. The only table in the instance's schemas is
+      dev.stg_finance.invoices (columns invoice_id, customer_email, amount, invoice_date). So the admin right
+      currently reaches no gold rows, but it would cover every table created in dev.finance.
+  - check: ".platform-agents/conventions.yaml (layers)"
+    result: "gold: \"<domain>\", so dev.finance is the gold layer of the finance domain; stg_finance is staging."
+  - check: "pipelines/*/pipeline.yaml and dags/ (grep for redshift and finance)"
+    result: >-
+      No pipeline spec or DAG in the repo writes dev.finance or dev.stg_finance. So no pipeline needs the
+      admin user to own the schema. It also means the repo doesn't say which database user should own it.
+  - check: "Who granted it, and when"
+    result: >-
+      Unknown. Redshift records GRANT and ALTER ... OWNER statements only in its own query logs, and no
+      identity of the platform agents reads them. In Redshift Serverless, admin is usually the namespace's
+      admin user, which is created with the namespace. If so, it has owned the schema since the schema was
+      created, not from a later grant. Someone who administers the database needs to confirm this.
+risk:
+  level: high
+  why: >-
+    The Redshift guide rates write or admin on the gold layer high. The owner of dev.finance can drop or
+    alter every object in it and can grant access to anyone, including on tables created later. Mitigating
+    factors: the schema holds no tables yet, and nothing here is public or external. Unknown: whether admin
+    is a superuser. The namespace admin user of a Redshift Serverless namespace usually is. A superuser
+    bypasses every grant, so revoking the schema ownership would not remove its reach. In that case the real
+    control is who can sign in as admin, which is the namespace's admin credentials.
+proposal: revoke
+remediation:
+  summary: >-
+    Move ownership of dev.finance to a dedicated owner that nobody signs in as. Then take ALTER and DROP away
+    from admin. If admin is a superuser, also limit who can get the namespace's admin credentials, because
+    grants don't restrict a superuser.
+  manual_steps:
+    - >-
+      Confirm the facts first. A person with a database login runs these catalog queries, which read
+      metadata only: SELECT usename, usesuper FROM pg_user WHERE usename = 'admin';
+      SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'finance';
+      SELECT schema_name, owner_name, grantee_name, grantee_type, privilege_type, object_type FROM svv_default_privileges WHERE schema_name = 'finance';
+    - >-
+      Choose the schema's owner. Use the database user or role of the pipeline that will write dev.finance
+      (for example "IAMR:composer-redshift", which already holds USAGE and CREATE there), or a dedicated user
+      without login, created by a superuser: CREATE USER finance_owner PASSWORD DISABLE;
+    - "Transfer ownership, run by a superuser or the current owner: ALTER SCHEMA finance OWNER TO finance_owner;  -- or the user chosen above"
+    - >-
+      Take the remaining schema rights away from admin, for the case where admin is not a superuser:
+      REVOKE ALTER, DROP, CREATE ON SCHEMA finance FROM admin;
+    - >-
+      Check the future-table grants. If the svv_default_privileges query lists default privileges owned by
+      admin for schema finance, remove the ones that aren't needed, for example:
+      ALTER DEFAULT PRIVILEGES FOR USER admin IN SCHEMA finance REVOKE ALL ON TABLES FROM <grantee>;
+    - >-
+      If admin is a superuser, keep it for break-glass use only. In the Redshift Serverless console
+      (namespace > Admin credentials), let AWS Secrets Manager manage the admin password, and limit who can
+      read that secret, and who can call redshift-serverless:GetCredentials as admin, through IAM. These are
+      the platform's IAM revoke steps, run by a person with IAM admin on account 897729105732.
+    - Re-run the catalog queries from step 1 to confirm that the new owner is in place and admin holds no ALTER or DROP on finance.
+alternatives:
+  - >-
+    Keep it: if admin owning dev.finance is intended (for example, it is the namespace admin and the
+    deliberate owner of dev schemas), comment on this PR "@claude this access is approved: <reason>". The
+    agent then adds it to governance/access/redshift-dev.yaml with a link to that comment.
+  - >-
+    Defer: the schema holds no tables yet, so the ownership change could be made before the first gold table
+    is created. In that case, say so on the PR so the finding stays open with a reminder rather than being
+    approved.
+history:
+  - at: "2026-10-30T17:11:29Z"
+    note: "Raised by the daily governance run (access, first_run) as a hold row: not added to the first baseline."

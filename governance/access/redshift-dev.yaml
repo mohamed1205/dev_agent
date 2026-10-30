@@ -1,0 +1,60 @@
+# Approved access baseline for redshift-dev (Redshift Serverless workgroup default-workgroup, database dev).
+# Written by the governance agent from metadata only, on the first governance run. Merging the PR approves
+# these entries. Risky access (admin on the gold schema finance) is NOT here: see
+# governance/findings/redshift-dev/741a9276.yaml.
+instance: redshift-dev
+reviewed: [object-grants]
+approved:
+  - principal: "role:arn:aws:iam::897729105732:role/composer-redshift"
+    resource: "redshift://default-workgroup/dev.finance"
+    access: read
+    via:
+      - "account 897729105732 role inline RunSqlOnDemoWorkgroup (ReadOwnStatements)"
+      - "account 897729105732 role inline RunSqlOnDemoWorkgroup (RunSqlOnDemoWorkgroup) (condition: resources: arn:aws:redshift-serverless:us-east-1:897729105732:workgroup/39f1c37e-5255-44a5-89d0-6e69a21d64c7)"
+    reason: "existing access when governance started"
+  - principal: "role:arn:aws:iam::897729105732:role/maint-detector"
+    resource: "redshift://default-workgroup/dev.finance"
+    access: read
+    via:
+      - "account 897729105732 role PlatformDetector (RedshiftCatalog)"
+    reason: "existing access when governance started"
+  - principal: "dbuser:admin"
+    resource: "redshift://default-workgroup/dev.stg_finance"
+    access: admin
+    via:
+      - "schema grant ALTER"
+      - "schema grant DROP"
+      - "schema grant OWNER"
+    reason: "existing access when governance started"
+  - principal: "role:arn:aws:iam::897729105732:role/composer-redshift"
+    resource: "redshift://default-workgroup/dev.stg_finance"
+    access: read
+    via:
+      - "account 897729105732 role inline RunSqlOnDemoWorkgroup (ReadOwnStatements)"
+      - "account 897729105732 role inline RunSqlOnDemoWorkgroup (RunSqlOnDemoWorkgroup) (condition: resources: arn:aws:redshift-serverless:us-east-1:897729105732:workgroup/39f1c37e-5255-44a5-89d0-6e69a21d64c7)"
+    reason: "existing access when governance started"
+  - principal: "role:arn:aws:iam::897729105732:role/maint-detector"
+    resource: "redshift://default-workgroup/dev.stg_finance"
+    access: read
+    via:
+      - "account 897729105732 role PlatformDetector (RedshiftCatalog)"
+    reason: "existing access when governance started"
+  - principal: "dbuser:IAMR:composer-redshift"
+    resource: "redshift://default-workgroup/dev.stg_finance.invoices"
+    access: read
+    via:
+      - "table grant SELECT"
+    reason: "existing access when governance started"
+  - principal: "dbuser:admin"
+    resource: "redshift://default-workgroup/dev.stg_finance.invoices"
+    access: admin
+    via:
+      - "table grant ALTER"
+      - "table grant DELETE"
+      - "table grant DROP"
+      - "table grant INSERT"
+      - "table grant OWNER"
+      - "table grant SELECT"
+      - "table grant TRUNCATE"
+      - "table grant UPDATE"
+    reason: "existing access when governance started"
