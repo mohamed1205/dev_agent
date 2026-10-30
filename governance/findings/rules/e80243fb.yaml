@@ -1,0 +1,150 @@
+# Governance finding: customer full names, emails and phone numbers reach the gold table crm.customer_orders.
+# Written by the governance agent from code and metadata only. Nothing here has been applied.
+id: "e80243fb"
+kind: rule_unmet
+group: rules
+created_at: "2026-10-30T17:16:00Z"
+summary: >-
+  Pipeline crm-orders-export-daily writes full_name, email and phone into the gold table
+  atlantean-land-415108.crm.customer_orders. The business rule says customer emails, phone numbers,
+  full names and national ids never reach the gold layer. national_id is dropped as the rule requires;
+  the other three aren't.
+subject:
+  rule: customer-orders-no-personal-data-in-gold
+  pipeline: crm-orders-export-daily
+  resource: atlantean-land-415108.crm.customer_orders
+  account: atlantean-land-415108
+  tools: [bigquery, composer]
+evidence:
+  - check: "business_logic.md, line 33"
+    result: "\"Customer emails, phone numbers, full names and national ids never reach the gold layer (crm.customer_orders)\""
+  - check: "dags/sql/crm_orders_export_daily/merge_customer_orders.sql, line 4"
+    result: >-
+      The MERGE source is SELECT * EXCEPT (amount, national_id) FROM raw_crm.customer_orders. It drops
+      national_id, but carries full_name, email and phone (raw columns, bigquery_tables/raw_crm/customer_orders.sql
+      lines 3-5) through.
+  - check: "dags/sql/crm_orders_export_daily/merge_customer_orders.sql, lines 15-19"
+    result: "WHEN MATCHED updates, and WHEN NOT MATCHED inserts, full_name, email and phone into crm.customer_orders."
+  - check: "bigquery_tables/crm/customer_orders.sql (and migration V202610301338__crm_customer_orders_create.sql), lines 4-6"
+    result: "The gold table's DDL declares full_name, email and phone."
+  - check: ".agent-tmp/governance/raw/instances/bigquery-dev/schema.json (detect step, live schema)"
+    result: >-
+      atlantean-land-415108.crm.customer_orders has the columns full_name, email and phone (STRING,
+      NULLABLE), each with an empty policy_tags list. national_id is not in the table.
+  - check: "governance/lineage/lineage.json"
+    result: >-
+      Columns crm.customer_orders.full_name, .email and .phone are written by step merge_customer_orders
+      (expressions s.full_name, s.email, s.phone). The layer of atlantean-land-415108.crm.customer_orders is gold.
+  - check: ".agent-tmp/governance/raw/instances/bigquery-dev/access.json (detect step, dataset grants)"
+    result: >-
+      Dataset atlantean-land-415108.crm still has the default special:projectReaders READER grant (and
+      projectWriters, projectOwners), so every holder of the project's Viewer role can read these columns.
+  - check: "dags/sql/crm_orders_export_daily/export_orders.sql, lines 7-12"
+    result: "The export selects only order_id, customer_id, amount, _load_id and _loaded_at: the personal data stays in BigQuery and doesn't leave in the export."
+  - check: ".agent-tmp/governance/raw/instances/sdp-dev/classification.json"
+    result: >-
+      Sensitive Data Protection discovery isn't profiling the project (scanner.on false), so there's no
+      scan result for these columns. This finding rests on the code and the schema alone; the column
+      names and descriptions ("Customer's full name", "Customer's email", "Customer's phone number")
+      say what they hold.
+risk:
+  level: high
+  why: >-
+    Personal data (names, email addresses, phone numbers) sits in the gold layer, which reports and
+    people use, against a business rule. The columns have no policy tags, and the crm dataset's default
+    projectReaders grant lets every project Viewer read them. Whether the table already holds such
+    values can't be known from metadata: it depends on whether the pipeline has run since it was
+    deployed. A person with data access can check.
+proposal: fix_pipeline
+remediation:
+  summary: >-
+    Stop writing full_name, email and phone to gold: list the MERGE source's columns explicitly instead
+    of SELECT * EXCEPT, and remove the three columns from the MERGE and from the gold table (a new Flyway
+    migration plus the table's definition file). The raw layer keeps them, as the rules allow.
+  suggested_change: |
+    --- a/dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+    +++ b/dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+    @@ -1,19 +1,20 @@
+     MERGE `atlantean-land-415108.crm.customer_orders` AS t
+     USING (
+       SELECT
+    -    * EXCEPT (amount, national_id),
+    +    order_id,
+    +    customer_id,
+         SAFE_CAST(amount AS NUMERIC) AS amount,
+         'gs://atlantean-land-415108-dev-data/demo/customers/{{ ds_nodash }}/' AS _source_uri
+       FROM `atlantean-land-415108.raw_crm.customer_orders`
+       WHERE _PARTITIONDATE = '{{ ds }}'
+         AND order_id IS NOT NULL
+         AND SAFE_CAST(amount AS NUMERIC) >= 0
+       QUALIFY ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY customer_id) = 1
+     ) AS s
+     ON t.order_id = s.order_id
+     WHEN MATCHED THEN
+    -  UPDATE SET customer_id = s.customer_id, full_name = s.full_name, email = s.email, phone = s.phone,
+    +  UPDATE SET customer_id = s.customer_id,
+         amount = s.amount, _source_uri = s._source_uri, _load_id = '{{ run_id }}', _loaded_at = CURRENT_TIMESTAMP()
+     WHEN NOT MATCHED THEN
+    -  INSERT (order_id, customer_id, full_name, email, phone, amount, _source_uri, _load_id, _loaded_at)
+    -  VALUES (s.order_id, s.customer_id, s.full_name, s.email, s.phone, s.amount, s._source_uri, '{{ run_id }}', CURRENT_TIMESTAMP())
+    +  INSERT (order_id, customer_id, amount, _source_uri, _load_id, _loaded_at)
+    +  VALUES (s.order_id, s.customer_id, s.amount, s._source_uri, '{{ run_id }}', CURRENT_TIMESTAMP())
+    --- a/bigquery_tables/crm/customer_orders.sql
+    +++ b/bigquery_tables/crm/customer_orders.sql
+    @@ -1,12 +1,9 @@
+     CREATE TABLE IF NOT EXISTS crm.customer_orders (
+       order_id STRING NOT NULL OPTIONS(description = "Order id from the source system"),
+       customer_id STRING OPTIONS(description = "Customer id"),
+    -  full_name STRING OPTIONS(description = "Customer's full name"),
+    -  email STRING OPTIONS(description = "Customer's email"),
+    -  phone STRING OPTIONS(description = "Customer's phone number"),
+       amount NUMERIC OPTIONS(description = "Order amount"),
+       _source_uri STRING OPTIONS(description = "The source folder the row was loaded from"),
+       _load_id STRING OPTIONS(description = "The Airflow run that loaded it"),
+       _loaded_at TIMESTAMP OPTIONS(description = "When it was loaded, UTC")
+     )
+     CLUSTER BY order_id;
+    --- /dev/null
+    +++ b/bigquery_tables/migrations/V<next version>__crm_customer_orders_drop_personal_data.sql
+    @@ -0,0 +1,5 @@
+    +-- crm.customer_orders: personal data never reaches gold (business rule customer-orders-no-personal-data-in-gold)
+    +ALTER TABLE crm.customer_orders
+    +  DROP COLUMN IF EXISTS full_name,
+    +  DROP COLUMN IF EXISTS email,
+    +  DROP COLUMN IF EXISTS phone;
+  manual_steps:
+    - >-
+      Open a Pipeline request for crm-orders-export-daily that quotes the rule ("Customer emails, phone
+      numbers, full names and national ids never reach the gold layer (crm.customer_orders)") and this
+      finding (governance/findings/rules/e80243fb.yaml), asking for the change above. The pipeline builder
+      makes the change in a PR; review and merge it there.
+    - >-
+      Deploy order: the new MERGE no longer names the three columns, so it works before and after the
+      columns are dropped. Deploy the SQL change first, then run the migration. The pipeline spec says the
+      deploy workflow runs flyway migrate, but on "2026-10-30T17:16:00Z" pa check validate warned that no
+      declared deployment file runs the migrations in bigquery_tables/migrations/. Until that's fixed, a
+      person must run the migration (or the ALTER TABLE) by hand, or the columns stay in gold.
+    - >-
+      Until the fix is deployed, decide whether to limit who reads crm.customer_orders now, for example by
+      removing the dataset's default projectReaders entry (bq show --format=prettyjson
+      atlantean-land-415108:crm > dataset.json; remove the projectReaders entry from "access"; bq update
+      --source dataset.json atlantean-land-415108:crm) and granting READER to the groups that need it.
+      Check first who relies on project Viewer to read crm.
+    - >-
+      After the migration has run, BigQuery keeps earlier versions of the table for its time-travel
+      window (up to 7 days), and then fail-safe storage. Decide with the data owner whether that's
+      acceptable, or whether the table should be recreated.
+  next_step: >-
+    Open a Pipeline request for crm-orders-export-daily that quotes the rule
+    customer-orders-no-personal-data-in-gold and this finding (e80243fb).
+alternatives:
+  - >-
+    If gold does need to join orders to customers by email or phone, keep a SHA256 hash of the column
+    instead of the value (TO_HEX(SHA256(LOWER(TRIM(email)))) AS email_sha256). Joins still work and the
+    value isn't readable. Say so on the PR and the suggested change will be adjusted.
+  - >-
+    If the interpretation is wrong (for example, crm.customer_orders isn't meant to be the gold layer),
+    say so on the PR; the rule and this verdict will be corrected.
+history:
+  - at: "2026-10-30T17:16:00Z"
+    note: "Raised by the daily governance run (rules)."
