@@ -1,0 +1,44 @@
+# Deploys the orchestrators' code (composer-dev) after each merge to main:
+# dev, in that order, each environment after the one before it succeeds.
+#
+# Proposed by the platform agents' CI/CD agent; a person reviews and commits it. It holds no location,
+# account or credential: each job reads them from its environment's variables, and signs in with OIDC,
+# so no key is stored anywhere. Protect the last environment with required reviewers.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["dags/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev:
+    name: Deploy to dev
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Sign in with OIDC (no stored key)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093  # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db  # v3.0.1
+      - name: Copy dags/
+        env:
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: gcloud storage rsync --recursive dags "gs://${DEPLOY_PATH}"
