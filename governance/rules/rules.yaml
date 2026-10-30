@@ -1,0 +1,151 @@
+# The business rules in business_logic.md, as the governance agent interpreted them.
+# Written from the rules file's text only. Merging the PR that changes this file confirms the
+# interpretation. Rules with status needs_clarification wait for a person's answer on the PR.
+# The example rules inside the file's leading HTML comment are documentation, not rules, and are
+# not interpreted here.
+source: business_logic.md
+source_sha256: da4f269e72c6318b3f1b619aa72e20f311f86957cbe846435e50805496f4e346
+rules:
+  - id: customer-orders-order-id-not-null
+    text: "order_id is never null in crm.customer_orders"
+    kind: not_null
+    applies_to:
+      - object: atlantean-land-415108.crm.customer_orders
+        column: order_id
+        layer: gold
+    status: active
+
+  - id: customer-orders-order-id-unique
+    text: "order_id is unique in crm.customer_orders"
+    kind: unique
+    applies_to:
+      - object: atlantean-land-415108.crm.customer_orders
+        column: order_id
+        layer: gold
+    status: needs_clarification
+    question: >-
+      The rule itself is clear: at most one row per order_id in crm.customer_orders. Its example,
+      "two rows with order_id O1001 are not allowed", describes two input rows. It doesn't say what the
+      result must be, so it can't be written as one test case (one row's values, and rejected, kept or
+      the output row's values). Which of these do you mean? (a) Exactly one row with order_id O1001 is
+      kept. If so, which one: today the pipeline keeps the one with the lowest customer_id, and a null
+      customer_id sorts first. (b) Both rows are rejected, because a duplicated order_id in one day's
+      files is an error. (c) The run fails. Please reply on the PR, and rewrite the example line in
+      business_logic.md if it helps, for example "Example: two rows with order_id O1001 and customer_ids
+      C1 and C2 keep only the row with customer_id C1".
+
+  - id: customer-orders-customer-id-not-null
+    text: "customer_id is never null in crm.customer_orders"
+    kind: not_null
+    applies_to:
+      - object: atlantean-land-415108.crm.customer_orders
+        column: customer_id
+        layer: gold
+    status: active
+
+  - id: customer-orders-amount-not-negative
+    text: "amount is never negative in crm.customer_orders"
+    kind: range
+    applies_to:
+      - object: atlantean-land-415108.crm.customer_orders
+        column: amount
+        layer: gold
+    parameters:
+      min: 0
+      min_inclusive: true
+    examples:
+      - text: "Example: an order with amount -5.00 is rejected"
+        given:
+          amount: "-5.00"
+        outcome: rejected
+    status: active
+
+  - id: customer-orders-amount-max
+    text: "amount is at most 100000 in crm.customer_orders"
+    kind: range
+    applies_to:
+      - object: atlantean-land-415108.crm.customer_orders
+        column: amount
+        layer: gold
+    parameters:
+      max: 100000
+      max_inclusive: true
+    examples:
+      - text: "Example: an order with amount 250000.00 is rejected"
+        given:
+          amount: "250000.00"
+        outcome: rejected
+    status: active
+
+  - id: customer-orders-amount-numeric
+    text: "amount is stored as an exact decimal (NUMERIC) in crm.customer_orders"
+    kind: type_precision
+    applies_to:
+      - object: atlantean-land-415108.crm.customer_orders
+        column: amount
+        layer: gold
+    parameters:
+      type: NUMERIC
+    status: active
+
+  - id: customer-orders-fresh-by-0800-utc
+    text: "crm.customer_orders is refreshed every day by 08:00 UTC"
+    kind: freshness
+    applies_to:
+      - object: atlantean-land-415108.crm.customer_orders
+        layer: gold
+    parameters:
+      every: day
+      deadline: "08:00"
+      timezone: UTC
+    status: active
+
+  - id: customer-orders-no-personal-data-in-gold
+    text: "Customer emails, phone numbers, full names and national ids never reach the gold layer (crm.customer_orders)"
+    kind: must_not_reach
+    applies_to:
+      - object: atlantean-land-415108.crm.customer_orders
+        column: email
+        layer: gold
+      - object: atlantean-land-415108.crm.customer_orders
+        column: phone
+        layer: gold
+      - object: atlantean-land-415108.crm.customer_orders
+        column: full_name
+        layer: gold
+      - object: atlantean-land-415108.crm.customer_orders
+        column: national_id
+        layer: gold
+    parameters:
+      # Sensitive Data Protection discovery's type names. National ids are country-specific types
+      # (US_SOCIAL_SECURITY_NUMBER, UK_NATIONAL_INSURANCE_NUMBER, ...). The rule doesn't say which
+      # country, so they're not listed yet: see the PR.
+      classes: [EMAIL_ADDRESS, PHONE_NUMBER, PERSON_NAME]
+    status: active
+
+  - id: customer-orders-export-no-personal-data
+    text: "full_name, email, phone and national_id never reach the customer orders export (gs://atlantean-land-415108-dev-data/exports/customer_orders/ and s3://pa-demo-exports-897729105732/exports/customer_orders/)"
+    kind: must_not_reach
+    # No `layer`: the export locations aren't a warehouse layer. In lineage they are labelled "source",
+    # like the files the pipeline loads, which hold these columns on purpose. A layer here would make
+    # the scanner check flag those source files too, so the rule names the export objects instead.
+    applies_to:
+      - object: gs://atlantean-land-415108-dev-data/exports/customer_orders/*/
+        column: full_name
+      - object: gs://atlantean-land-415108-dev-data/exports/customer_orders/*/
+        column: email
+      - object: gs://atlantean-land-415108-dev-data/exports/customer_orders/*/
+        column: phone
+      - object: gs://atlantean-land-415108-dev-data/exports/customer_orders/*/
+        column: national_id
+      - object: s3://pa-demo-exports-897729105732/exports/customer_orders/*/
+        column: full_name
+      - object: s3://pa-demo-exports-897729105732/exports/customer_orders/*/
+        column: email
+      - object: s3://pa-demo-exports-897729105732/exports/customer_orders/*/
+        column: phone
+      - object: s3://pa-demo-exports-897729105732/exports/customer_orders/*/
+        column: national_id
+    parameters:
+      classes: [EMAIL_ADDRESS, PHONE_NUMBER, PERSON_NAME]
+    status: active

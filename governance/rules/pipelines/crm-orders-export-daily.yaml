@@ -1,0 +1,209 @@
+# Whether crm-orders-export-daily meets each business rule, from its code, its tables' DDL and their
+# live schemas (metadata only; no data was read). Written by the governance agent.
+# customer-orders-order-id-unique is not listed: it waits for clarification (see governance/rules/rules.yaml).
+pipeline: crm-orders-export-daily
+files_sha256: e460897d43943b85e904d782b6432a4d6b28f3c2c43c681443bf434700e82fba
+rules_sha256: da4f269e72c6318b3f1b619aa72e20f311f86957cbe846435e50805496f4e346
+verified_at: "2026-10-30T17:16:00Z"
+rules:
+  - rule: customer-orders-order-id-not-null
+    status: met
+    steps:
+      - step: load_files
+        column: order_id
+        verdict: preserved
+        evidence:
+          - file: dags/crm_orders_export_daily.py
+            line: 71
+            note: "schema_fields gives order_id no mode (NULLABLE): the raw load enforces nothing, but it only fills the raw layer."
+          - file: bigquery_tables/raw_crm/customer_orders.sql
+            line: 7
+            note: "raw_crm.customer_orders.order_id is nullable; nulls from the source can reach raw."
+      - step: merge_customer_orders
+        column: order_id
+        verdict: enforced
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 9
+            note: "WHERE ... AND order_id IS NOT NULL filters null order ids out before the MERGE."
+          - file: bigquery_tables/crm/customer_orders.sql
+            line: 2
+            note: "order_id STRING NOT NULL in the gold DDL; the live schema has mode REQUIRED, so BigQuery rejects a null."
+  - rule: customer-orders-customer-id-not-null
+    status: unmet
+    finding: "6deaf748"
+    steps:
+      - step: load_files
+        column: customer_id
+        verdict: preserved
+        evidence:
+          - file: dags/crm_orders_export_daily.py
+            line: 66
+            note: "schema_fields gives customer_id no mode (NULLABLE): nulls from the source files reach raw unchecked."
+      - step: merge_customer_orders
+        column: customer_id
+        verdict: at_risk
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 4
+            note: "customer_id passes through SELECT * EXCEPT (...) from the nullable raw column, with no filter, COALESCE or check in between."
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 11
+            note: "QUALIFY ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY customer_id) = 1: BigQuery sorts NULL first in ascending order, so when an order appears twice and one copy has no customer_id, the copy with the null is the one kept."
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 15
+            note: "WHEN MATCHED ... UPDATE SET customer_id = s.customer_id can overwrite an existing customer_id with a null."
+          - file: bigquery_tables/crm/customer_orders.sql
+            line: 3
+            note: "customer_id STRING is nullable in the gold DDL; the live schema has mode NULLABLE."
+      - step: check_rows
+        column: customer_id
+        verdict: preserved
+        evidence:
+          - file: dags/crm_orders_export_daily.py
+            line: 86
+            note: "The check only tests that the run loaded at least one row; it doesn't test customer_id."
+  - rule: customer-orders-amount-not-negative
+    status: met
+    steps:
+      - step: load_files
+        column: amount
+        verdict: preserved
+        evidence:
+          - file: dags/crm_orders_export_daily.py
+            line: 72
+            note: "amount is loaded as STRING into raw; any value passes, but only into the raw layer."
+      - step: merge_customer_orders
+        column: amount
+        verdict: enforced
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 10
+            note: "WHERE ... AND SAFE_CAST(amount AS NUMERIC) >= 0 drops negative amounts (and, since NULL >= 0 isn't true, amounts that are empty or don't parse). The example amount -5.00 is rejected."
+  - rule: customer-orders-amount-max
+    status: unmet
+    finding: "71382d5e"
+    steps:
+      - step: load_files
+        column: amount
+        verdict: preserved
+        evidence:
+          - file: dags/crm_orders_export_daily.py
+            line: 72
+            note: "amount is loaded as STRING into raw; any value passes, but only into the raw layer."
+      - step: merge_customer_orders
+        column: amount
+        verdict: at_risk
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 10
+            note: "The only filter on amount is the lower bound (>= 0). Nothing bounds it above, so the example amount 250000.00 would be kept and written to gold."
+          - file: bigquery_tables/crm/customer_orders.sql
+            line: 7
+            note: "amount NUMERIC has no constraint; NUMERIC holds values far above 100000."
+      - step: check_rows
+        column: amount
+        verdict: preserved
+        evidence:
+          - file: dags/crm_orders_export_daily.py
+            line: 86
+            note: "The check only tests that the run loaded at least one row; it doesn't test amount."
+  - rule: customer-orders-amount-numeric
+    status: met
+    steps:
+      - step: merge_customer_orders
+        column: amount
+        verdict: enforced
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 5
+            note: "SAFE_CAST(amount AS NUMERIC) AS amount: the raw string becomes an exact decimal; values that don't parse become NULL and are then filtered out by the >= 0 condition (line 10)."
+          - file: bigquery_tables/crm/customer_orders.sql
+            line: 7
+            note: "amount NUMERIC in the gold DDL; the live schema has type NUMERIC (38 digits, scale 9)."
+  - rule: customer-orders-fresh-by-0800-utc
+    status: unknown
+    steps:
+      - step: wait_for_files
+        verdict: unknown
+        evidence:
+          - file: dags/crm_orders_export_daily.py
+            line: 42
+            note: "schedule 0 6 * * * (UTC): each day's run starts at 06:00 UTC, two hours before the 08:00 UTC deadline."
+          - file: dags/crm_orders_export_daily.py
+            line: 56
+            note: "The sensor waits up to 6 hours for the day's folder (timeout 6*60*60, poke every 10 minutes), so a late file can push the gold refresh to as late as about 12:00 UTC. A missing folder fails the run and gold isn't refreshed that day."
+          - file: pipelines/crm-orders-export-daily/pipeline.yaml
+            line: 14
+            note: "The spec doesn't say when the source files arrive, so whether the run finishes by 08:00 UTC can't be decided from code and metadata."
+      - step: merge_customer_orders
+        verdict: preserved
+        evidence:
+          - file: dags/crm_orders_export_daily.py
+            line: 105
+            note: "The merge runs straight after the load; nothing between the sensor and the gold write waits."
+  - rule: customer-orders-no-personal-data-in-gold
+    status: unmet
+    finding: "e80243fb"
+    steps:
+      - step: merge_customer_orders
+        column: full_name
+        verdict: violated
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 4
+            note: "SELECT * EXCEPT (amount, national_id) carries full_name from raw into the MERGE source."
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 18
+            note: "WHEN NOT MATCHED ... INSERT (... full_name ...) writes it to crm.customer_orders (and line 15 updates it)."
+          - file: bigquery_tables/crm/customer_orders.sql
+            line: 4
+            note: "full_name is a column of the gold table's DDL and of its live schema, with no policy tag."
+      - step: merge_customer_orders
+        column: email
+        verdict: violated
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 4
+            note: "SELECT * EXCEPT (amount, national_id) carries email from raw into the MERGE source."
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 18
+            note: "WHEN NOT MATCHED ... INSERT (... email ...) writes it to crm.customer_orders (and line 15 updates it)."
+          - file: bigquery_tables/crm/customer_orders.sql
+            line: 5
+            note: "email is a column of the gold table's DDL and of its live schema, with no policy tag."
+      - step: merge_customer_orders
+        column: phone
+        verdict: violated
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 4
+            note: "SELECT * EXCEPT (amount, national_id) carries phone from raw into the MERGE source."
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 18
+            note: "WHEN NOT MATCHED ... INSERT (... phone ...) writes it to crm.customer_orders (and line 15 updates it)."
+          - file: bigquery_tables/crm/customer_orders.sql
+            line: 6
+            note: "phone is a column of the gold table's DDL and of its live schema, with no policy tag."
+      - step: merge_customer_orders
+        column: national_id
+        verdict: enforced
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+            line: 4
+            note: "EXCEPT (amount, national_id) drops national_id; it isn't in the gold DDL or the live schema."
+  - rule: customer-orders-export-no-personal-data
+    status: met
+    steps:
+      - step: export_orders
+        verdict: enforced
+        evidence:
+          - file: dags/sql/crm_orders_export_daily/export_orders.sql
+            line: 7
+            note: "The EXPORT DATA select names its columns explicitly: order_id, customer_id, amount, _load_id, _loaded_at (lines 7-12). full_name, email, phone and national_id aren't exported."
+      - step: copy_to_s3
+        verdict: preserved
+        evidence:
+          - file: dags/crm_orders_export_daily.py
+            line: 100
+            note: "GCSToS3Operator copies the files under exports/customer_orders/{{ ds_nodash }}/ as they are, the folder export_orders just wrote; it adds no columns."

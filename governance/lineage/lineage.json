@@ -1,0 +1,274 @@
+{
+  "columns": [
+    {
+      "expressions": [
+        "'{{ run_id }}'"
+      ],
+      "file": "dags/sql/crm_orders_export_daily/merge_customer_orders.sql",
+      "from": [],
+      "pipeline": "crm-orders-export-daily",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders._load_id"
+    },
+    {
+      "expressions": [
+        "CURRENT_TIMESTAMP()"
+      ],
+      "file": "dags/sql/crm_orders_export_daily/merge_customer_orders.sql",
+      "from": [],
+      "pipeline": "crm-orders-export-daily",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders._loaded_at"
+    },
+    {
+      "expressions": [
+        "s._source_uri  (s._source_uri = 'gs://atlantean-land-415108-dev-data/demo/customers/{{ ds_nodash }}/')"
+      ],
+      "file": "dags/sql/crm_orders_export_daily/merge_customer_orders.sql",
+      "from": [],
+      "pipeline": "crm-orders-export-daily",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders._source_uri"
+    },
+    {
+      "expressions": [
+        "s.amount  (s.amount = SAFE_CAST(amount AS NUMERIC))"
+      ],
+      "file": "dags/sql/crm_orders_export_daily/merge_customer_orders.sql",
+      "from": [
+        "atlantean-land-415108.raw_crm.customer_orders.amount"
+      ],
+      "pipeline": "crm-orders-export-daily",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders.amount"
+    },
+    {
+      "expressions": [
+        "s.customer_id"
+      ],
+      "file": "dags/sql/crm_orders_export_daily/merge_customer_orders.sql",
+      "from": [],
+      "pipeline": "crm-orders-export-daily",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders.customer_id"
+    },
+    {
+      "expressions": [
+        "s.email"
+      ],
+      "file": "dags/sql/crm_orders_export_daily/merge_customer_orders.sql",
+      "from": [],
+      "pipeline": "crm-orders-export-daily",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders.email"
+    },
+    {
+      "expressions": [
+        "s.full_name"
+      ],
+      "file": "dags/sql/crm_orders_export_daily/merge_customer_orders.sql",
+      "from": [],
+      "pipeline": "crm-orders-export-daily",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders.full_name"
+    },
+    {
+      "expressions": [
+        "s.order_id"
+      ],
+      "file": "dags/sql/crm_orders_export_daily/merge_customer_orders.sql",
+      "from": [],
+      "pipeline": "crm-orders-export-daily",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders.order_id"
+    },
+    {
+      "expressions": [
+        "s.phone"
+      ],
+      "file": "dags/sql/crm_orders_export_daily/merge_customer_orders.sql",
+      "from": [],
+      "pipeline": "crm-orders-export-daily",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders.phone"
+    }
+  ],
+  "edges": [
+    {
+      "from": "atlantean-land-415108.crm.customer_orders",
+      "orchestrator": "composer-dev",
+      "pipeline": "crm-orders-export-daily",
+      "runs_on": "bigquery-dev",
+      "source": "spec",
+      "step": "export_orders",
+      "to": "gs://atlantean-land-415108-dev-data/exports/customer_orders/*/"
+    },
+    {
+      "from": "atlantean-land-415108.raw_crm.customer_orders",
+      "orchestrator": "composer-dev",
+      "pipeline": "crm-orders-export-daily",
+      "runs_on": "bigquery-dev",
+      "source": "spec",
+      "step": "merge_customer_orders",
+      "to": "atlantean-land-415108.crm.customer_orders"
+    },
+    {
+      "from": "gs://atlantean-land-415108-dev-data/demo/customers/*/*.csv",
+      "orchestrator": "composer-dev",
+      "pipeline": "crm-orders-export-daily",
+      "runs_on": "bigquery-dev",
+      "source": "spec",
+      "step": "load_files",
+      "to": "atlantean-land-415108.raw_crm.customer_orders"
+    },
+    {
+      "from": "gs://atlantean-land-415108-dev-data/exports/customer_orders/*/",
+      "orchestrator": "composer-dev",
+      "pipeline": "crm-orders-export-daily",
+      "runs_on": "s3-dev",
+      "source": "spec",
+      "step": "copy_to_s3",
+      "to": "s3://pa-demo-exports-897729105732/exports/customer_orders/*/"
+    }
+  ],
+  "objects": {
+    "atlantean-land-415108.crm.customer_orders": {
+      "account": "atlantean-land-415108",
+      "columns": [
+        {
+          "name": "order_id",
+          "not_null": true,
+          "type": "STRING"
+        },
+        {
+          "name": "customer_id",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "full_name",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "email",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "phone",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "amount",
+          "not_null": false,
+          "type": "NUMERIC"
+        },
+        {
+          "name": "_source_uri",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "_load_id",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "_loaded_at",
+          "not_null": false,
+          "type": "TIMESTAMP"
+        }
+      ],
+      "container": "atlantean-land-415108.crm",
+      "instance": "bigquery-dev",
+      "layer": "gold",
+      "platform": "gcp",
+      "tool": "bigquery"
+    },
+    "atlantean-land-415108.raw_crm.customer_orders": {
+      "account": "atlantean-land-415108",
+      "columns": [
+        {
+          "name": "customer_id",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "full_name",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "email",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "phone",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "national_id",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "order_id",
+          "not_null": false,
+          "type": "STRING"
+        },
+        {
+          "name": "amount",
+          "not_null": false,
+          "type": "STRING"
+        }
+      ],
+      "container": "atlantean-land-415108.raw_crm",
+      "instance": "bigquery-dev",
+      "layer": "raw",
+      "platform": "gcp",
+      "tool": "bigquery"
+    },
+    "gs://atlantean-land-415108-dev-data/demo/customers/*/": {
+      "account": null,
+      "container": "gs://atlantean-land-415108-dev-data",
+      "instance": "gcs-dev",
+      "layer": "source",
+      "platform": "gcp",
+      "tool": "gcs"
+    },
+    "gs://atlantean-land-415108-dev-data/demo/customers/*/*.csv": {
+      "account": null,
+      "container": "gs://atlantean-land-415108-dev-data",
+      "instance": "gcs-dev",
+      "layer": "source",
+      "platform": "gcp",
+      "tool": "gcs"
+    },
+    "gs://atlantean-land-415108-dev-data/exports/customer_orders/*/": {
+      "account": null,
+      "container": "gs://atlantean-land-415108-dev-data",
+      "instance": "gcs-dev",
+      "layer": "source",
+      "platform": "gcp",
+      "tool": "gcs"
+    },
+    "s3://pa-demo-exports-897729105732/exports/customer_orders/*/": {
+      "account": null,
+      "container": "s3://pa-demo-exports-897729105732",
+      "instance": "s3-dev",
+      "layer": "source",
+      "platform": "aws",
+      "tool": "s3"
+    }
+  },
+  "provenance_columns": [
+    "_source_uri",
+    "_load_id",
+    "_loaded_at"
+  ],
+  "unresolved": []
+}
