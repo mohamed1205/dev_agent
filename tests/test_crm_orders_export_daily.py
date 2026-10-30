@@ -97,6 +97,20 @@ def test_wait_for_files_waits_for_the_days_source_folder(dag):
     assert sensor.timeout and sensor.timeout > 0  # gives up instead of waiting forever
 
 
+def test_wait_for_files_checks_every_ten_minutes_and_gives_up_after_six_hours(dag):
+    # The spec doesn't give the wait budget; this pins the values the DAG documents as chosen
+    # (a regression test: a change here should be deliberate, and update this test with a reason).
+    sensor = dag.get_task("wait_for_files")
+    assert sensor.poke_interval == 10 * 60
+    assert sensor.timeout == 6 * 60 * 60
+
+
+def test_dag_starts_on_the_day_the_pipeline_was_created_in_utc(dag):
+    # Regression pin: spec timezone is UTC; start_date is 2026-10-29, the day before the spec's
+    # created_at (2026-10-30), so the 06:00 UTC run of the 30th is the first one.
+    assert dag.start_date == datetime.datetime(2026, 10, 29, tzinfo=datetime.timezone.utc)
+
+
 def test_load_files_loads_the_days_csv_files_into_the_raw_partition(dag):
     # spec: load_files reads gs://.../demo/customers/{{ ds_nodash }}/*.csv into raw_crm.customer_orders,
     # partitioned by day; source notes: CSV with a header row
