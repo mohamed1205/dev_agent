@@ -23,7 +23,7 @@ instances:
       location: us-central1 # the environment's region
       airflow_version: 2.11.1 # Airflow version the environment runs. CI installs it to test that DAGs import.
       # repo_path: ...  # optional (default dags): folder in the dev repo that holds this environment's DAGs (deployed to its DAG bucket)
-      ci_packages: [apache-airflow-providers-amazon==9.22.0] # extra PyPI packages the DAGs import
+      ci_packages: [apache-airflow-providers-amazon] # extra PyPI packages the DAGs import
   - name: bigquery-dev
     tool: bigquery
     enabled: true
