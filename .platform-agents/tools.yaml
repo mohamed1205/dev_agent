@@ -45,7 +45,7 @@ instances:
     agents: [cicd]
     params:
       files: [deploy/deploy_dags.sh] # the deployment files, as paths or globs from the repo root (a list), e.g. [deploy/deploy.sh, Makefile]
-      deploys: {composer-dev: 'gs://us-central1-composer-agent-00a7fcf7-bucket/dags'} # which orchestrator instances these files deploy, and where each one's code goes (a map), e.g. {my-orchestrator: "<where its code is copied to>"}
+      deploys: {composer-dev: 'gs://us-central1-composer-agent-76861d07-bucket/dags'} # which orchestrator instances these files deploy, and where each one's code goes (a map), e.g. {my-orchestrator: "<where its code is copied to>"}
   - name: dataplex-dev
     tool: dataplex
     enabled: true
