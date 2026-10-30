@@ -104,7 +104,7 @@ capacity:
 
 #   exclude               paths or globs never audited, e.g. [legacy/**]
 audit:
-  enabled: false
+  enabled: true
   max_findings_per_run: 10
   exclude: []
 # Scrubbing logs before an agent reads them (`pa logs`). Emails, phone and card numbers, IBANs, long
