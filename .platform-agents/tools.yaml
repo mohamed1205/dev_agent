@@ -58,7 +58,7 @@ instances:
     agents: [governance, error-triage]
     account: atlantean-land-415108 # GCP project ID
     params:
-      locations: [global] # where discovery keeps its data profiles (a list), e.g. [global] or [europe-west1]
+      locations: [us] # where discovery keeps its data profiles (a list), e.g. [global] or [europe-west1]
   - name: flyway-dev
     tool: flyway
     enabled: true
