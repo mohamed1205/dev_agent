@@ -17,3 +17,11 @@ Examples:
 
 Changes to this file go through a normal PR, and its code owners review them.
 -->
+
+- order_id is never null in dev_raw.orders
+
+- amount is never negative in dev_raw.orders
+
+  - Example: an order with amount -5.00 is rejected
+
+- order_id is unique in dev_raw.orders_summary
