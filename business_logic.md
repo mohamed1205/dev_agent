@@ -18,10 +18,20 @@ Examples:
 Changes to this file go through a normal PR, and its code owners review them.
 -->
 
-- order_id is never null in dev_raw.orders
+## Customer orders (crm.customer_orders, gold)
 
-- amount is never negative in dev_raw.orders
+- order_id is never null in crm.customer_orders
+- order_id is unique in crm.customer_orders
+  - Example: two rows with order_id O1001 are not allowed
+- customer_id is never null in crm.customer_orders
+- amount is never negative in crm.customer_orders
   - Example: an order with amount -5.00 is rejected
+- amount is at most 100000 in crm.customer_orders
+  - Example: an order with amount 250000.00 is rejected
+- amount is stored as an exact decimal (NUMERIC) in crm.customer_orders
+- crm.customer_orders is refreshed every day by 08:00 UTC
+- Customer emails, phone numbers, full names and national ids never reach the gold layer (crm.customer_orders)
 
-- order_id is unique in dev_raw.orders_summary
+## Customer orders export (to AWS)
+
 - full_name, email, phone and national_id never reach the customer orders export (gs://atlantean-land-415108-dev-data/exports/customer_orders/ and s3://pa-demo-exports-897729105732/exports/customer_orders/)
