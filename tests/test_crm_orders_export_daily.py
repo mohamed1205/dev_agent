@@ -14,6 +14,7 @@ import pytest
 from airflow.models import DagBag
 from hypothesis import given, strategies as st
 
+import crm_orders_export_daily
 from crm_orders_export_daily import source_prefix
 
 DAG_ID = "crm_orders_export_daily"
@@ -32,7 +33,10 @@ SPEC_STEPS = [
 
 @pytest.fixture(scope="module")
 def dag():
-    bag = DagBag(dag_folder="dags", include_examples=False)  # composer-dev's repo_path
+    # Load the folder the imported module lives in (composer-dev's repo_path, "dags", in a normal run),
+    # so the DAG tested is the code the unit tests import, also when the checks test a changed copy.
+    folder = str(pathlib.Path(crm_orders_export_daily.__file__).parent)
+    bag = DagBag(dag_folder=folder, include_examples=False)
     assert not bag.import_errors, bag.import_errors
     return bag.dags[DAG_ID]  # not get_dag(), which also looks in Airflow's metadata database
 
