@@ -1,0 +1,85 @@
+# Governance finding: Sensitive Data Protection discovery doesn't profile the project.
+# Written by the governance agent from metadata only. Nothing here has been applied.
+id: "86a52362"
+kind: protection_gap
+group: sdp-dev
+created_at: "2026-10-30T15:18:25Z"
+summary: >-
+  Sensitive Data Protection discovery does not profile project atlantean-land-415108 (or the detector
+  cannot read its profiles), so nothing reports which tables and buckets hold personal or confidential
+  data: the BigQuery datasets dev_raw, raw_crm and crm and the bucket gs://atlantean-land-415108-dev-data
+  are not checked for sensitive data.
+subject:
+  account: atlantean-land-415108
+  tools: [sdp, bigquery, gcs]
+evidence:
+  - check: ".agent-tmp/governance/work/protection-gaps-sdp-dev.json (detect step, mode gaps)"
+    result: "One gap: kind scanner_off for account atlantean-land-415108."
+  - check: ".agent-tmp/governance/raw/instances/sdp-dev/classification.json (detect step, location global)"
+    result: >-
+      scanner.on is false and scanner.last_profiled is empty; no columns were returned. The detect step
+      noted that the projectDataProfiles, tableDataProfiles, columnDataProfiles and fileStoreDataProfiles
+      in location global couldn't be read, and asked whether discovery is on and whether the detector
+      holds the platformDetectorSdp role.
+  - check: ".platform-agents/tools.yaml (instances bigquery-dev and gcs-dev)"
+    result: >-
+      The project's governed data lives in BigQuery datasets dev_raw, raw_crm and crm (location US) and
+      the bucket gs://atlantean-land-415108-dev-data. The crm datasets are named for customer data, so
+      personal data there is likely but unconfirmed: no profile says what they hold.
+  - check: ".platform-agents/tools.yaml (instance sdp-dev)"
+    result: "sdp-dev reads discovery's data profiles from locations [global] only."
+risk:
+  level: medium
+  why: >-
+    Not an exposure in itself, but a blind spot: without profiles, the governance agent cannot flag
+    personal or confidential columns without policy tags, sensitive data shared publicly or broadly,
+    or data a business rule forbids in the gold layer (protection modes unprotected and forbidden), and
+    the access review cannot rate grants by what the resources hold. The raw_crm and crm datasets are
+    likely to hold customer data. It is not known from this run whether discovery is really off or only
+    unreadable: the reads failed, and the result is the same for a missing scan configuration, a missing
+    platformDetectorSdp role, or profiles kept in a location other than global.
+proposal: turn_on_scanning
+remediation:
+  summary: >-
+    First confirm whether a discovery scan configuration already exists. If none exists, create one for
+    the project covering BigQuery and Cloud Storage, publishing to Dataplex Universal Catalog and tagging
+    resources, without sample findings export. Then grant the detector the platformDetectorSdp role so
+    the next daily run can read the profiles.
+  manual_steps:
+    - >-
+      Check whether discovery already runs: in the Google Cloud console for project atlantean-land-415108,
+      open Sensitive Data Protection > Discovery > Scan configurations. If a configuration for this
+      project (or its organization/folder) exists, note its location; skip to the role step, and if its
+      location isn't global, add that location to sdp-dev's params.locations in .platform-agents/tools.yaml
+      through a normal PR.
+    - >-
+      If none exists: Sensitive Data Protection > Discovery > Create scan configuration, scope: this
+      project (atlantean-land-415108). Create it for BigQuery, and a second one (or include it, as the
+      console allows) for Cloud Storage.
+    - >-
+      Targets: at least the BigQuery datasets dev_raw, raw_crm and crm, and the bucket
+      atlantean-land-415108-dev-data (the whole project is simplest). Cadence: BigQuery, profile daily on
+      new columns and on table changes; Cloud Storage, regenerate monthly.
+    - >-
+      Actions: turn on "Publish to Dataplex Universal Catalog" and "Tag resources" (sensitivity tags that
+      IAM conditions can use). Leave "Export data profiles to BigQuery > sample findings" OFF: sample
+      findings copy values from the data into a table.
+    - >-
+      Do not add inspection templates, custom dictionaries or de-identification settings as part of this
+      change; those are a separate decision for the data owner.
+    - >-
+      Grant the platform detector's service account the platformDetectorSdp role on the project, as in
+      the RUN_ME_GUIDE, Step 7 (a person with IAM admin on the project runs it).
+    - >-
+      Wait for discovery's first profiles (it can take a few hours to a day), then let the next daily
+      governance run read them; this finding closes once classification.json shows scanner.on true.
+alternatives:
+  - >-
+    If discovery is deliberately off for this dev project (for example, it holds no real customer data),
+    close this PR without merging and say why; add the label agent-ignore to stop it being raised again.
+  - >-
+    If discovery runs in another location, only update sdp-dev's params.locations and grant the role;
+    no new scan configuration is needed.
+history:
+  - at: "2026-10-30T15:18:25Z"
+    note: "Raised by the daily governance run (protection, mode gaps)."
