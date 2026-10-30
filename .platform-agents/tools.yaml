@@ -23,7 +23,7 @@ instances:
       location: us-central1 # the environment's region
       airflow_version: 2.11.1 # Airflow version the environment runs. CI installs it to test that DAGs import.
       # repo_path: ...  # optional (default dags): folder in the dev repo that holds this environment's DAGs (deployed to its DAG bucket)
-      # ci_packages: ...  # optional: extra PyPI packages your DAGs import (usually the environment's PyPI packages), installed for the DAG import test
+      ci_packages: [apache-airflow-providers-amazon] # extra PyPI packages the DAGs import
   - name: bigquery-dev
     tool: bigquery
     enabled: true
@@ -31,7 +31,7 @@ instances:
     account: atlantean-land-415108 # GCP project ID
     params:
       location: US # where the datasets live. Jobs must run in the same location.
-      datasets: [dev_raw] # the datasets pipelines may read from or write to (a list). The pipeline checks reject code that names any other dataset.
+      datasets: [dev_raw, raw_crm, crm] # the datasets pipelines may read from or write to (a list). The pipeline checks reject code that names any other dataset.
   - name: gcs-dev
     tool: gcs
     enabled: true
@@ -39,13 +39,6 @@ instances:
     account: atlantean-land-415108 # GCP project ID
     params:
       buckets: [atlantean-land-415108-dev-data] # the buckets pipelines may read from or write to (a list). The pipeline checks reject code that names any other bucket.
-  - name: script-dev
-    tool: script
-    enabled: true
-    agents: [cicd]
-    params:
-      files: [deploy/deploy_dags.sh] # the deployment files, as paths or globs from the repo root (a list), e.g. [deploy/deploy.sh, Makefile]
-      deploys: {composer-dev: 'gs://us-central1-composer-agent-76861d07-bucket/dags'} # which orchestrator instances these files deploy, and where each one's code goes (a map), e.g. {my-orchestrator: "<where its code is copied to>"}
   - name: dataplex-dev
     tool: dataplex
     enabled: true
@@ -86,3 +79,10 @@ instances:
       serverless: true
       database: dev
       schemas: [stg_finance, finance]
+  - name: s3-dev
+    tool: s3
+    enabled: true
+    agents: [pipeline-builder, governance, cicd]
+    account: "897729105732" # AWS account ID
+    params:
+      buckets: [pa-demo-exports-897729105732] # the buckets pipelines may read from or write to

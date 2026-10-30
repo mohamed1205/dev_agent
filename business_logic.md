@@ -24,3 +24,4 @@ Changes to this file go through a normal PR, and its code owners review them.
   - Example: an order with amount -5.00 is rejected
 
 - order_id is unique in dev_raw.orders_summary
+- full_name, email, phone and national_id never reach the customer orders export (gs://atlantean-land-415108-dev-data/exports/customer_orders/ and s3://pa-demo-exports-897729105732/exports/customer_orders/)

@@ -174,7 +174,7 @@ cicd:
   require_tests: warn
   require_deploy: warn
   require_mutation: gold
-  environments: [dev, prod]
+  environments: [dev]
   max_files_per_run: 10
   mention:
     tests: []
