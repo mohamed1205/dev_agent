@@ -1,0 +1,159 @@
+id: d78b19bb
+kind: alerting_off
+group: alerting-gcp-atlantean-land-415108
+created_at: "2026-10-30T15:14:56Z"
+summary: >-
+  Access-denied alerting is off for GCP project atlantean-land-415108: no Cloud Monitoring alert policy
+  notifies anyone about permission-denied requests to BigQuery or Cloud Storage, and Cloud Storage
+  DATA_READ audit logs are off, so denied reads on the project's buckets aren't even logged.
+subject:
+  account: atlantean-land-415108
+  tools:
+    - bigquery
+    - gcs
+    - composer
+evidence:
+  - check: "detect step alerting check (.agent-tmp/governance/raw/accounts/gcp/atlantean-land-415108/alerting.json, written \"2026-10-30T15:13Z\")"
+    result: >-
+      covered: false. bigquery: alert false, audit_logs true. gcs: alert false, audit_logs false.
+      policies: [] (no alert policies at all in the project), log_metrics: [] (no log-based metrics),
+      audit_configs: [] (no audit log configuration).
+  - check: "gcloud projects get-iam-policy atlantean-land-415108 --format=\"json(auditConfigs)\" (run \"2026-10-30T15:14Z\")"
+    result: >-
+      null: the project has no auditConfigs, so only the defaults apply. BigQuery data-access audit logs
+      are always on; Cloud Storage DATA_READ (and DATA_WRITE) audit logs are off by default.
+  - check: "modules/platforms/gcp/governance/alerting.md (product guide)"
+    result: >-
+      "On" requires, per tool in use: for BigQuery, an enabled log-match alert policy with a channel for
+      permission-denied (status code 7) requests to bigquery.googleapis.com; for Cloud Storage, the same for
+      storage.googleapis.com plus DATA_READ audit logs turned on. Neither tool meets the alert condition,
+      and Cloud Storage also misses its audit logs.
+  - check: ".platform-agents/tools.yaml (instances on this project)"
+    result: >-
+      bigquery-dev (datasets dev_raw, raw_crm, crm), gcs-dev (bucket atlantean-land-415108-dev-data) and
+      composer-dev (environment composer-agent, us-central1) are on this project. The guide covers BigQuery
+      and Cloud Storage; Composer has no condition of its own in the guide (see risk).
+risk:
+  level: medium
+  why: >-
+    Nobody is told when someone (a person, a job's service account, or an outsider probing) is refused
+    access to the project's warehouse datasets or its data bucket, so probing or a broken grant on a
+    legitimate job goes unnoticed. For Cloud Storage it is worse: with DATA_READ audit logs off, denied
+    reads on atlantean-land-415108-dev-data leave no trace to investigate afterwards. This is a detection
+    gap, not an exposure: it gives nobody access by itself, hence medium. Not known from metadata:
+    whether the team already watches these denials some other way (for example a log sink to a SIEM);
+    a person who knows the project's monitoring setup can confirm. Composer: its environment's DAG bucket
+    is a Cloud Storage bucket, so turning on Cloud Storage audit logs and this condition also covers denied
+    reads there; denials inside Airflow itself are not audit-log events and are outside this guide.
+proposal: turn_on_alerting
+remediation:
+  summary: >-
+    Turn on Cloud Storage DATA_READ audit logs for the project, then create one new log-match alert policy
+    (there is no existing policy to extend: policies is empty) for permission-denied requests to BigQuery
+    and Cloud Storage, with a notification channel the data-access owners pick, a 5-minute notification
+    rate limit and a 1-day auto close. Then check it with a test denial.
+  manual_steps:
+    - >-
+      Turn on Cloud Storage audit logs (they are off; BigQuery's are already on, nothing to do there).
+      Console: IAM & Admin → Audit Logs → filter "Cloud Storage" → tick "Data Read" → Save, in project
+      atlantean-land-415108. Or, if the project's IAM is managed as code, add the
+      google_project_iam_audit_config block from infrastructure_as_code. These logs add cost by log volume
+      (every object read on the project's buckets, including the Composer DAG bucket, is logged): check the
+      project's logging budget first.
+    - >-
+      Pick or create the notification channel owned by the team that owns data access (email group, chat or
+      paging). Console: Monitoring → Alerting → Edit notification channels. Note its id with
+      `gcloud alpha monitoring channels list --project=atlantean-land-415108 --format="value(name,displayName)"`.
+      Don't use one person's address taken from logs.
+    - |-
+      Create the alert policy. Console: Monitoring → Alerting → Create policy → Use a log-based condition,
+      with the filter below, notification rate limit 5 minutes, auto close 1 day, the channel from the
+      previous step, and the documentation text below. Or save this as policy.json, replacing <CHANNEL_ID>:
+
+      {
+        "displayName": "Access denied: BigQuery and Cloud Storage (atlantean-land-415108)",
+        "documentation": {
+          "mimeType": "text/markdown",
+          "content": "A principal was refused access (PERMISSION_DENIED, code 7) to BigQuery or Cloud Storage in project atlantean-land-415108. It may be a missing grant for a legitimate job, a mistyped resource name, or probing. Look up the principal, resource and method in the audit log entry, and see the governance records in https://github.com/mohamed1205/dev_agent/tree/main/governance"
+        },
+        "combiner": "OR",
+        "enabled": true,
+        "conditions": [
+          {
+            "displayName": "Permission denied on BigQuery or Cloud Storage",
+            "conditionMatchedLog": {
+              "filter": "logName:\"cloudaudit.googleapis.com%2Fdata_access\"\nprotoPayload.status.code=7\nprotoPayload.serviceName=(\"bigquery.googleapis.com\" OR \"storage.googleapis.com\")"
+            }
+          }
+        ],
+        "alertStrategy": {
+          "notificationRateLimit": { "period": "300s" },
+          "autoClose": "86400s"
+        },
+        "notificationChannels": [
+          "projects/atlantean-land-415108/notificationChannels/<CHANNEL_ID>"
+        ]
+      }
+
+      then run:
+      gcloud alpha monitoring policies create --project=atlantean-land-415108 --policy-from-file=policy.json
+    - >-
+      Verify the filter before relying on it. Have someone (or a test service account) without access try to
+      read a canary-like test table in BigQuery and a test object in atlantean-land-415108-dev-data. In Logs
+      Explorer, run the filter above and check each attempt matches; then check the alert opens an incident
+      and the channel receives one notification.
+    - >-
+      Leave this finding in place: the next governance run's check confirms covered: true, and the finding
+      is resolved then. Until it does, later runs only remind on this PR.
+  infrastructure_as_code: |-
+    # The repo doesn't manage monitoring as code today; use this only if the project's infrastructure is
+    # (or will be) in Terraform. Replace <CHANNEL_ID>.
+    resource "google_project_iam_audit_config" "storage_data_read" {
+      project = "atlantean-land-415108"
+      service = "storage.googleapis.com"
+      audit_log_config {
+        log_type = "DATA_READ"
+      }
+    }
+
+    resource "google_monitoring_alert_policy" "access_denied" {
+      project      = "atlantean-land-415108"
+      display_name = "Access denied: BigQuery and Cloud Storage (atlantean-land-415108)"
+      combiner     = "OR"
+      enabled      = true
+
+      conditions {
+        display_name = "Permission denied on BigQuery or Cloud Storage"
+        condition_matched_log {
+          filter = <<-EOT
+            logName:"cloudaudit.googleapis.com%2Fdata_access"
+            protoPayload.status.code=7
+            protoPayload.serviceName=("bigquery.googleapis.com" OR "storage.googleapis.com")
+          EOT
+        }
+      }
+
+      alert_strategy {
+        notification_rate_limit {
+          period = "300s"
+        }
+        auto_close = "86400s"
+      }
+
+      notification_channels = [
+        "projects/atlantean-land-415108/notificationChannels/<CHANNEL_ID>",
+      ]
+
+      documentation {
+        mime_type = "text/markdown"
+        content   = "A principal was refused access (PERMISSION_DENIED, code 7) to BigQuery or Cloud Storage in project atlantean-land-415108. Look up the principal, resource and method in the audit log entry; see https://github.com/mohamed1205/dev_agent/tree/main/governance"
+      }
+    }
+alternatives:
+  - >-
+    Also turn on Cloud Storage DATA_WRITE audit logs if denied writes (uploads, deletes) on the buckets
+    should alert too: the guide asks only for DATA_READ, and denied writes are logged under DATA_WRITE.
+    The same filter matches them once they're logged.
+  - >-
+    If denials are already watched elsewhere (for example a log sink to a SIEM), say so on this PR and close
+    it with the agent-ignore label, so it isn't raised again.
