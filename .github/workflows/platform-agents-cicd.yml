@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "Only this task (tests, deploy, repair); blank for all"
+        description: "Only this task (tests, deploy, deploy-bootstrap, migrations, repair); blank for all"
         required: false
         default: ""
 
