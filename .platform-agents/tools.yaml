@@ -23,7 +23,7 @@ instances:
       location: us-central1 # the environment's region
       airflow_version: 2.11.1 # Airflow version the environment runs. CI installs it to test that DAGs import.
       # repo_path: ...  # optional (default dags): folder in the dev repo that holds this environment's DAGs (deployed to its DAG bucket)
-      # ci_packages: ...  # optional: extra PyPI packages your DAGs import (usually the environment's PyPI packages), installed for the DAG import test
+      ci_packages: [apache-airflow-providers-amazon==9.22.0] # extra PyPI packages the DAGs import
   - name: bigquery-dev
     tool: bigquery
     enabled: true
@@ -31,7 +31,7 @@ instances:
     account: atlantean-land-415108 # GCP project ID
     params:
       location: US # where the datasets live. Jobs must run in the same location.
-      datasets: [dev_raw] # the datasets pipelines may read from or write to (a list). The pipeline checks reject code that names any other dataset.
+      datasets: [dev_raw, raw_crm, crm] # the datasets pipelines may read from or write to (a list). The pipeline checks reject code that names any other dataset.
   - name: gcs-dev
     tool: gcs
     enabled: true

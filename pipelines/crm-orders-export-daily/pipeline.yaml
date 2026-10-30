@@ -1,0 +1,83 @@
+id: crm-orders-export-daily
+title: Daily customer orders, GCS to BigQuery to S3
+description: Loads each day's customer order files into BigQuery, keeps one clean row per order, and exports the day's orders without personal data as Parquet, and copies the export to S3 for the AWS side.
+owner: mohamed1205
+request: https://github.com/mohamed1205/dev_agent
+created_at: "2026-10-30T11:40:00Z"
+orchestrator: composer-dev
+schedule: "0 6 * * *"
+timezone: UTC
+sources:
+  - instance: gcs-dev
+    object: gs://atlantean-land-415108-dev-data/demo/customers/*/*.csv
+    format: csv
+    notes: Comma-separated with a header row. One folder per day, YYYYMMDD. Columns customer_id, full_name, email, phone, national_id, order_id, amount.
+targets:
+  - instance: bigquery-dev
+    object: atlantean-land-415108.raw_crm.customer_orders
+    write_mode: append
+    partition_by: _PARTITIONDATE
+  - instance: bigquery-dev
+    object: atlantean-land-415108.crm.customer_orders
+    write_mode: merge
+    merge_keys: [order_id]
+  - instance: gcs-dev
+    object: gs://atlantean-land-415108-dev-data/exports/customer_orders/*/*.parquet
+    write_mode: replace
+steps:
+  - id: wait_for_files
+    kind: wait_for_files
+    runs_on: gcs-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/demo/customers/{{ ds_nodash }}/"]
+    outputs: []
+  - id: load_files
+    kind: load_files
+    runs_on: bigquery-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/demo/customers/{{ ds_nodash }}/*.csv"]
+    outputs: [atlantean-land-415108.raw_crm.customer_orders]
+  - id: merge_customer_orders
+    kind: bigquery_sql
+    runs_on: bigquery-dev
+    file: dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+    inputs: [atlantean-land-415108.raw_crm.customer_orders]
+    outputs: [atlantean-land-415108.crm.customer_orders]
+  - id: check_rows
+    kind: check
+    runs_on: bigquery-dev
+    inputs: [atlantean-land-415108.crm.customer_orders]
+    outputs: []
+  - id: export_orders
+    kind: bigquery_sql
+    runs_on: bigquery-dev
+    file: dags/sql/crm_orders_export_daily/export_orders.sql
+    inputs: [atlantean-land-415108.crm.customer_orders]
+    outputs: ["gs://atlantean-land-415108-dev-data/exports/customer_orders/{{ ds_nodash }}/"]
+  - id: copy_to_s3
+    kind: transfer
+    runs_on: gcs-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/exports/customer_orders/{{ ds_nodash }}/"]
+    outputs: ["s3://pa-demo-exports-897729105732/exports/customer_orders/{{ ds_nodash }}/"]
+artifacts:
+  - pipelines/crm-orders-export-daily/pipeline.yaml
+  - dags/crm_orders_export_daily.py
+  - dags/sql/crm_orders_export_daily/merge_customer_orders.sql
+  - dags/sql/crm_orders_export_daily/export_orders.sql
+manual_steps:
+  - "Datasets raw_crm and crm exist; their tables come from the Flyway migrations in bigquery_tables/ at deploy time."
+  - "AWS: bucket s3://pa-demo-exports-897729105732 (us-east-1), private; Composer's AWS role may write only under exports/."
+  - "Composer: apache-airflow-providers-amazon installed; aws_default assumes the Composer AWS role through Google web identity."
+  - "Deploy: the deploy workflow runs flyway migrate, then copies the DAGs; unpause the DAG."
+assumptions:
+  - The files' columns are all loaded as STRING in the raw layer; amount is cast to NUMERIC in gold.
+  - "Only order_id, customer_id, amount and provenance leave BigQuery; full_name, email, phone and national_id never reach the export."
+  - "The S3 bucket has no tool pack instance yet (the S3 pack is coming): add an s3 instance and the bucket as a target when it lands."
+context:
+  tool_versions:
+    composer-dev: composer-3-airflow-2.11.1-build.22
+  docs_consulted:
+    - https://airflow.apache.org/docs/apache-airflow/2.11.1/
+    - https://cloud.google.com/bigquery/docs/reference/standard-sql/dml-syntax
+    - https://cloud.google.com/bigquery/docs/reference/standard-sql/export-statements
+    - https://airflow.apache.org/docs/apache-airflow-providers-amazon/9.22.0/transfer/gcs_to_s3.html
+  checks: []
+history: []
