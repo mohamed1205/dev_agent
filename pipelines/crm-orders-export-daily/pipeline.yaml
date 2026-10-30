@@ -24,6 +24,9 @@ targets:
   - instance: gcs-dev
     object: gs://atlantean-land-415108-dev-data/exports/customer_orders/*/*.parquet
     write_mode: replace
+  - instance: s3-dev
+    object: s3://pa-demo-exports-897729105732/exports/customer_orders/{{ ds_nodash }}/*.parquet
+    write_mode: replace
 steps:
   - id: wait_for_files
     kind: wait_for_files
@@ -54,7 +57,7 @@ steps:
     outputs: ["gs://atlantean-land-415108-dev-data/exports/customer_orders/{{ ds_nodash }}/"]
   - id: copy_to_s3
     kind: transfer
-    runs_on: gcs-dev
+    runs_on: s3-dev
     inputs: ["gs://atlantean-land-415108-dev-data/exports/customer_orders/{{ ds_nodash }}/"]
     outputs: ["s3://pa-demo-exports-897729105732/exports/customer_orders/{{ ds_nodash }}/"]
 artifacts:
@@ -70,7 +73,6 @@ manual_steps:
 assumptions:
   - The files' columns are all loaded as STRING in the raw layer; amount is cast to NUMERIC in gold.
   - "Only order_id, customer_id, amount and provenance leave BigQuery; full_name, email, phone and national_id never reach the export."
-  - "The S3 bucket has no tool pack instance yet (the S3 pack is coming): add an s3 instance and the bucket as a target when it lands."
 context:
   tool_versions:
     composer-dev: composer-3-airflow-2.11.1-build.22

@@ -86,3 +86,10 @@ instances:
       serverless: true
       database: dev
       schemas: [stg_finance, finance]
+  - name: s3-dev
+    tool: s3
+    enabled: true
+    agents: [pipeline-builder, governance, cicd]
+    account: "897729105732" # AWS account ID
+    params:
+      buckets: [pa-demo-exports-897729105732] # the buckets pipelines may read from or write to
