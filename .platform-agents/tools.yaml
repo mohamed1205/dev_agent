@@ -76,3 +76,13 @@ instances:
       # history_schema: ...  # optional: the dataset or schema where Flyway keeps flyway_schema_history (Flyway's defaultSchema); for the suggested flyway.toml
 
       history_schema: dev_raw
+  - name: redshift-dev
+    tool: redshift
+    enabled: true
+    agents: [pipeline-builder, governance, cicd]
+    account: "897729105732" # AWS account ID
+    params:
+      warehouse: default-workgroup # Redshift Serverless workgroup name
+      serverless: true
+      database: dev
+      schemas: [stg_finance, finance]

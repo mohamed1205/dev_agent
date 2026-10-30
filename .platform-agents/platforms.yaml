@@ -12,3 +12,11 @@ platforms:
       table: atlantean-land-415108:agent_canary.canary # Canary BigQuery table, <project>:<dataset>.<table>
       object: gs://atlantean-land-415108-agent-canary/canary.txt # Canary Cloud Storage object, gs://<bucket>/<object>
       secret: projects/atlantean-land-415108/secrets/agent-canary # Canary secret, projects/<project>/secrets/<name>
+  aws:
+    region: us-east-1
+    identities:
+      agent: arn:aws:iam::897729105732:role/maint-agent
+      detector: arn:aws:iam::897729105732:role/maint-detector
+    canaries:
+      object: s3://pa-canary-897729105732/canary/canary.txt
+      secret: pa-canary-secret
