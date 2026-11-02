@@ -23,3 +23,4 @@ Changes to this file go through a normal PR, and its code owners review them.
 - Customer phone numbers never reach the gold layer (sales.pos_transactions, sales.daily_branch_sales)
 - Customer phone numbers never reach the AWS export for Finance HQ
 - sales.daily_branch_sales has one row per branch and day, and is refreshed every day by 04:00 UTC
+- In Finance HQ's AWS copy (finance_hq.daily_branch_sales), branch_code is one of RUH, JED, DMM, revenue_sar is never null, and there is one row per branch and day
