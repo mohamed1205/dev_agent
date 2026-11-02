@@ -8,30 +8,18 @@ pipeline that doesn't meet one. The pipeline builder also builds new pipelines t
 Write each rule as a bullet, in plain words, below this comment. Name the tables or columns it covers
 when you can. While this file holds only comments, the check is skipped.
 
-Examples:
-- order_id is never null, and is unique, in every sales table.
-- Amounts are stored as exact decimals with 2 places, in EUR.
-- Customer emails and phone numbers never reach the gold layer.
-- Every gold table is refreshed by 07:00 Europe/Berlin.
-- Every order in sales.orders has a matching customer in sales.customers.
-
 Changes to this file go through a normal PR, and its code owners review them.
 -->
 
-## Customer orders (crm.customer_orders, gold)
+## Branch sales (Finance)
 
-- order_id is never null in crm.customer_orders
-- order_id is unique in crm.customer_orders
-  - Example: two rows with order_id O1001 are not allowed
-- customer_id is never null in crm.customer_orders
-- amount is never negative in crm.customer_orders
-  - Example: an order with amount -5.00 is rejected
-- amount is at most 100000 in crm.customer_orders
-  - Example: an order with amount 250000.00 is rejected
-- amount is stored as an exact decimal (NUMERIC) in crm.customer_orders
-- crm.customer_orders is refreshed every day by 08:00 UTC
-- Customer emails, phone numbers, full names and national ids never reach the gold layer (crm.customer_orders)
-
-## Customer orders export (to AWS)
-
-- full_name, email, phone and national_id never reach the customer orders export (gs://atlantean-land-415108-dev-data/exports/customer_orders/ and s3://pa-demo-exports-897729105732/exports/customer_orders/)
+- transaction_id is unique in sales.pos_transactions: a file the POS vendor sends twice must not count twice
+  - Example: the same transaction_id RUH-20261102-0001 in two files of the same day is counted once
+- Refunds count as negative sales: daily revenue includes REFUND rows with their negative amount
+  - Example: a sale of 100.00 SAR and a refund of -30.00 SAR on the same day give revenue 70.00 SAR
+- amount is never null in sales.pos_transactions, and is stored as an exact decimal (NUMERIC) in SAR
+- branch_code is one of RUH, JED, DMM in sales.pos_transactions
+- transaction_date is never null in sales.pos_transactions, whatever date format the branch's POS sends
+- Customer phone numbers never reach the gold layer (sales.pos_transactions, sales.daily_branch_sales)
+- Customer phone numbers never reach the AWS export for Finance HQ
+- sales.daily_branch_sales has one row per branch and day, and is refreshed every day by 04:00 UTC
