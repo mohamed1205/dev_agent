@@ -7,7 +7,7 @@ name: platform-agents-governance
 # rule forbids, an issue) for a person to decide.
 #   detect:  no Claude. Signs in as the detector (environment platform-agents-detector), collects the
 #            metadata the packs name (access, schemas, alerting state, the catalogs' outputs) and works
-#            out which tasks have work: alerting, access, lineage, rules, columns, quality, protection. Nothing
+#            out which tasks have work: alerting, access, access-fit, lineage, lineage-enable, rules, columns, quality, protection. Nothing
 #            changed means no Claude and no cost.
 #   run:     one Claude run per task with work, signed in as the agent (environment
 #            platform-agents-agent), guardrails first.
@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "Only this task (alerting, access, lineage, rules, columns, quality, protection); blank for all"
+        description: "Only this task (alerting, access, access-fit, lineage, lineage-enable, rules, columns, quality, protection); blank for all"
         required: false
         default: ""
 
