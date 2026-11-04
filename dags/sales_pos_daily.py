@@ -37,7 +37,8 @@ with DAG(
     dag_id="sales_pos_daily",
     description="Daily branch sales for Finance",
     schedule="30 2 * * *",
-    start_date=pendulum.datetime(2026, 11, 4, tz="UTC"),
+    # 2026-11-01, not the build day: runs for logical dates 2026-11-01 and 2026-11-02 are triggered by hand.
+    start_date=pendulum.datetime(2026, 11, 1, tz="UTC"),
     catchup=False,
     max_active_runs=1,
     # Finance needs sales.daily_branch_sales by 04:00 UTC: a run still going at 04:00 fails loudly.

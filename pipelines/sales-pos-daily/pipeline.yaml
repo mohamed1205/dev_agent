@@ -146,6 +146,7 @@ assumptions:
   - "The S3 copy keeps the staging object names: gs://atlantean-land-415108-dev-data/finance/daily_branch_sales/<D>/... goes to s3://pa-demo-exports-897729105732/finance/daily_branch_sales/<D>/..."
   - "Row provenance: sales.pos_transactions and sales.daily_branch_sales carry _source_uri (the run's source folder), _load_id (the Airflow run id) and _loaded_at; raw_pos.pos_transactions keeps the files' columns, and its partition is the run date."
   - Owner is the conventions' default, data-platform; the request named none.
+  - "start_date is 2026-11-01 (UTC), at the reviewer's request on the PR, so runs triggered by hand for logical dates 2026-11-01 and 2026-11-02 are not before it. catchup stays false: when the DAG is unpaused, Airflow schedules only the latest interval on its own, so those two days still need the manual triggers in manual_steps."
 context:
   tool_versions:
     composer-dev: composer-3-airflow-2.11.1-build.22
