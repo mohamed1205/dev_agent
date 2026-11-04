@@ -1,0 +1,188 @@
+id: sales-pos-daily
+title: Daily branch sales for Finance
+description: >-
+  Loads the nightly POS files of the Riyadh (RUH), Jeddah (JED) and Dammam (DMM) branches as they arrive,
+  keeps one clean row per transaction without customer phone numbers, builds revenue and transaction counts
+  per branch per day for the Finance dashboard (ready by 04:00 UTC), and copies each day's figures to S3 as
+  Parquet for Finance HQ on AWS.
+owner: data-platform
+request: https://github.com/mohamed1205/dev_agent/issues/32
+created_at: "2026-11-04T13:07:18Z"
+orchestrator: composer-dev
+schedule: "30 2 * * *"
+timezone: UTC
+sources:
+  - instance: gcs-dev
+    object: gs://atlantean-land-415108-dev-data/pos/*/pos_*.csv
+    format: csv
+    notes: >-
+      Comma-separated with a header row, all columns read as STRING. One folder per day, pos/<YYYY-MM-DD>/,
+      at least one file per branch named pos_<branch>_<YYYYMMDD>[_resend].csv; files arrive by 02:00 UTC.
+      Holds personal data (customer_phone).
+targets:
+  - instance: bigquery-dev
+    object: atlantean-land-415108.raw_pos.pos_transactions
+    write_mode: append
+    partition_by: _PARTITIONDATE
+    notes: The files as they arrive; each run replaces its own partition (the run date). Keeps customer_phone.
+  - instance: bigquery-dev
+    object: atlantean-land-415108.sales.pos_transactions
+    write_mode: merge
+    merge_keys: [transaction_id]
+    partition_by: transaction_date
+    notes: One row per transaction, typed; no customer_phone.
+  - instance: bigquery-dev
+    object: atlantean-land-415108.sales.daily_branch_sales
+    write_mode: replace
+    partition_by: sales_date
+    notes: Each run replaces the run date's rows, one per branch, in one transaction. Used by the Finance dashboard; due by 04:00 UTC.
+  - instance: gcs-dev
+    object: gs://atlantean-land-415108-dev-data/finance/daily_branch_sales/*/daily_branch_sales_*.parquet
+    write_mode: replace
+    notes: Staging copy of the day's daily_branch_sales rows (six columns, Parquet) for the transfer to S3; overwritten on a rerun.
+  - instance: s3-dev
+    object: s3://pa-demo-exports-897729105732/finance/daily_branch_sales/*/daily_branch_sales_*.parquet
+    write_mode: replace
+    notes: >-
+      Finance HQ's copy (finance_hq.daily_branch_sales in Glue, registered by Finance after the first run):
+      sales_date, branch_code, revenue_sar, transaction_count, sale_count, refund_count. One Parquet file per day,
+      same name on a rerun so it is overwritten.
+steps:
+  - id: wait_for_ruh
+    kind: wait_for_files
+    runs_on: gcs-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/pos/{{ ds }}/pos_ruh_*"]
+    outputs: []
+  - id: wait_for_jed
+    kind: wait_for_files
+    runs_on: gcs-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/pos/{{ ds }}/pos_jed_*"]
+    outputs: []
+  - id: wait_for_dmm
+    kind: wait_for_files
+    runs_on: gcs-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/pos/{{ ds }}/pos_dmm_*"]
+    outputs: []
+  - id: wait_for_quiet
+    kind: wait_for_files
+    runs_on: gcs-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/pos/{{ ds }}/"]
+    outputs: []
+    notes: At least 3 files and no new upload for 5 minutes.
+  - id: load_files
+    kind: load_files
+    runs_on: bigquery-dev
+    inputs: ["gs://atlantean-land-415108-dev-data/pos/{{ ds }}/pos_*.csv"]
+    outputs: [atlantean-land-415108.raw_pos.pos_transactions]
+  - id: validate_raw
+    kind: check
+    runs_on: bigquery-dev
+    file: dags/sql/sales_pos_daily/validate_raw.sql
+    inputs: [atlantean-land-415108.raw_pos.pos_transactions]
+    outputs: []
+    notes: Fails the run before anything reaches the sales dataset (branch codes, date and time formats, currency, amounts, refunds, differing re-sent rows).
+  - id: merge_transactions
+    kind: bigquery_sql
+    runs_on: bigquery-dev
+    file: dags/sql/sales_pos_daily/merge_transactions.sql
+    inputs: [atlantean-land-415108.raw_pos.pos_transactions]
+    outputs: [atlantean-land-415108.sales.pos_transactions]
+  - id: build_daily_sales
+    kind: bigquery_sql
+    runs_on: bigquery-dev
+    file: dags/sql/sales_pos_daily/build_daily_sales.sql
+    inputs: [atlantean-land-415108.sales.pos_transactions]
+    outputs: [atlantean-land-415108.sales.daily_branch_sales]
+  - id: check_transactions
+    kind: check
+    runs_on: bigquery-dev
+    file: dags/sql/sales_pos_daily/check_transactions.sql
+    inputs: [atlantean-land-415108.sales.pos_transactions]
+    outputs: []
+  - id: check_daily_sales
+    kind: check
+    runs_on: bigquery-dev
+    file: dags/sql/sales_pos_daily/check_daily_sales.sql
+    inputs: [atlantean-land-415108.sales.daily_branch_sales, atlantean-land-415108.sales.pos_transactions]
+    outputs: []
+  - id: stage_export
+    kind: bigquery_sql
+    runs_on: bigquery-dev
+    file: dags/sql/sales_pos_daily/stage_export.sql
+    inputs: [atlantean-land-415108.sales.daily_branch_sales]
+    outputs: ["gs://atlantean-land-415108-dev-data/finance/daily_branch_sales/{{ ds }}/daily_branch_sales_*.parquet"]
+  - id: copy_export_to_s3
+    kind: transfer
+    runs_on: s3-dev
+    runs_as: "aws:arn:aws:iam::897729105732:role/composer-aws"
+    inputs: ["gs://atlantean-land-415108-dev-data/finance/daily_branch_sales/{{ ds }}/daily_branch_sales_*.parquet"]
+    outputs: ["s3://pa-demo-exports-897729105732/finance/daily_branch_sales/{{ ds }}/daily_branch_sales_*.parquet"]
+    notes: GCSToS3Operator on the Composer worker, writing to S3 through Airflow connection aws_default (keyless web identity federation into IAM role composer-aws).
+artifacts:
+  - pipelines/sales-pos-daily/pipeline.yaml
+  - dags/sales_pos_daily.py
+  - dags/sql/sales_pos_daily/validate_raw.sql
+  - dags/sql/sales_pos_daily/merge_transactions.sql
+  - dags/sql/sales_pos_daily/build_daily_sales.sql
+  - dags/sql/sales_pos_daily/check_transactions.sql
+  - dags/sql/sales_pos_daily/check_daily_sales.sql
+  - dags/sql/sales_pos_daily/stage_export.sql
+manual_steps:
+  - "Apply the table definitions (bigquery_tables/raw_pos/pos_transactions.sql, bigquery_tables/sales/pos_transactions.sql, bigquery_tables/sales/daily_branch_sales.sql) with Flyway before switching the DAG on: the CI/CD agent adds their migrations to this PR. load_files uses CREATE_NEVER, so the run fails until they exist."
+  - "Confirm Airflow connection aws_default in composer-agent is the keyless one for IAM role arn:aws:iam::897729105732:role/composer-aws (web identity federation from dsc-poc-composer@atlantean-land-415108.iam.gserviceaccount.com, Region us-east-1), as the requester said; the agent can't see Airflow connections."
+  - "Deploy: gcloud storage cp dags/sales_pos_daily.py gs://us-central1-composer-agent-dc6f6851-bucket/dags/ and gcloud storage cp -r dags/sql/sales_pos_daily gs://us-central1-composer-agent-dc6f6851-bucket/dags/sql/ (no deployment file is declared yet; the CI/CD agent's upkeep proposes one)."
+  - "Unpause the DAG sales_pos_daily in the Airflow UI (new DAGs start paused in composer-agent). To load 2026-11-01 and 2026-11-02, trigger runs with logical dates 2026-11-01T02:30:00Z and 2026-11-02T02:30:00Z."
+  - "After the first run, Finance registers the Glue table finance_hq.daily_branch_sales over s3://pa-demo-exports-897729105732/finance/daily_branch_sales/ (Parquet)."
+assumptions:
+  - "No web access in this run: the docs_consulted pages are the version-specific pages these operators and statements come from, but they were not fetched. A reviewer should confirm the operator arguments against them (see the PR)."
+  - The Google provider version isn't pinned in pypi_packages and couldn't be read here; only long-standing operators and arguments are used.
+  - "A run processes the previous day: the 02:30 UTC run on D+1 loads pos/<D>/ ({{ ds }}) and publishes day D, as the requester confirmed. Every row's transaction_date must equal D, or validate_raw fails the run (this also catches day/month swaps)."
+  - "JED's date format is chosen by the run date: YYYY-MM-DD for runs up to 2026-11-01, DD/MM/YYYY from 2026-11-02, as the requester said."
+  - "A transaction_id appearing more than once in a day must be an exact copy (a re-sent file); different rows under one transaction_id (e.g. several product lines in one transaction) fail the run rather than silently dropping revenue."
+  - A REFUND row with a positive amount fails the run, so refunds always reduce revenue.
+  - "quantity and unit_price are stored as NUMERIC; transaction_time as TIME. Dates and times stay in Saudi local time, without conversion."
+  - "sales.daily_branch_sales always gets one row per branch for the day; a branch with no transactions gets revenue 0 and counts 0."
+  - "EXPORT DATA needs a wildcard in its URI; a day's handful of rows is written as one file, daily_branch_sales_000000000000.parquet, so a rerun overwrites the same S3 key."
+  - "The S3 copy keeps the staging object names: gs://atlantean-land-415108-dev-data/finance/daily_branch_sales/<D>/... goes to s3://pa-demo-exports-897729105732/finance/daily_branch_sales/<D>/..."
+  - "Row provenance: sales.pos_transactions and sales.daily_branch_sales carry _source_uri (the run's source folder), _load_id (the Airflow run id) and _loaded_at; raw_pos.pos_transactions keeps the files' columns, and its partition is the run date."
+  - Owner is the conventions' default, data-platform; the request named none.
+  - "start_date is 2026-11-01 (UTC), at the reviewer's request on the PR, so runs triggered by hand for logical dates 2026-11-01 and 2026-11-02 are not before it. catchup stays false: when the DAG is unpaused, Airflow schedules only the latest interval on its own, so those two days still need the manual triggers in manual_steps."
+context:
+  tool_versions:
+    composer-dev: composer-3-airflow-2.11.1-build.22
+    apache-airflow: 2.11.1
+    apache-airflow-providers-amazon: 9.22.0
+    apache-airflow-providers-google: not pinned in pypi_packages; preinstalled by composer-3-airflow-2.11.1-build.22 (version not read)
+  docs_consulted:
+    - https://airflow.apache.org/docs/apache-airflow/2.11.1/
+    - https://airflow.apache.org/docs/apache-airflow-providers-amazon/9.22.0/transfer/gcs_to_s3.html
+    - https://airflow.apache.org/docs/apache-airflow-providers-google/stable/operators/cloud/gcs.html
+    - https://airflow.apache.org/docs/apache-airflow-providers-google/stable/operators/cloud/bigquery.html
+    - https://cloud.google.com/composer/docs/composer-versions
+    - https://cloud.google.com/bigquery/docs/reference/standard-sql/dml-syntax
+    - https://cloud.google.com/bigquery/docs/reference/standard-sql/export-statements
+    - https://cloud.google.com/bigquery/docs/reference/standard-sql/transactions
+  checks:
+    - check: gcloud storage ls "gs://atlantean-land-415108-dev-data/pos/"
+      result: Folders pos/2026-11-01/ and pos/2026-11-02/ (the folder date is YYYY-MM-DD).
+    - check: gcloud storage ls "gs://atlantean-land-415108-dev-data/pos/2026-11-01/" and ".../pos/2026-11-02/"
+      result: "pos_<dmm|jed|ruh>_<YYYYMMDD>.csv, one per branch; 2026-11-02 also has pos_ruh_20261102_resend.csv."
+    - check: gcloud storage buckets describe gs://atlantean-land-415108-dev-data
+      result: Location US, same as the BigQuery datasets.
+    - check: gcloud storage buckets get-iam-policy gs://atlantean-land-415108-dev-data
+      result: Only the project's legacy owner, editor and viewer roles; the Composer service account reaches it through its project role.
+    - check: bq show --format=prettyjson atlantean-land-415108:raw_pos and atlantean-land-415108:sales
+      result: Both datasets exist in US.
+    - check: bq ls --format=prettyjson atlantean-land-415108:raw_pos and atlantean-land-415108:sales
+      result: No tables yet; the three tables come from their Flyway definitions.
+    - check: gcloud projects get-iam-policy atlantean-land-415108 (bindings for dsc-poc-composer@atlantean-land-415108.iam.gserviceaccount.com)
+      result: "roles/bigquery.admin, roles/storage.admin, roles/composer.worker, roles/composer.admin, roles/secretmanager.admin: enough for every Google step, no grant needed."
+    - check: gcloud storage objects list "gs://us-central1-composer-agent-dc6f6851-bucket/dags/"
+      result: Refused (403 for the agent identity); a clash with a deployed DAG named sales_pos_daily couldn't be ruled out.
+    - check: aws s3api list-objects-v2 --bucket pa-demo-exports-897729105732 --prefix finance/
+      result: No objects under finance/ yet.
+    - check: aws s3api get-bucket-location --bucket pa-demo-exports-897729105732
+      result: LocationConstraint null, i.e. us-east-1.
+    - check: Composer environment summary (.agent-tmp/composer-dev-context.json)
+      result: "composer-3-airflow-2.11.1-build.22, matching params.airflow_version 2.11.1; apache-airflow-providers-amazon==9.22.0; no secrets backend; new DAGs start paused."
+history: []
