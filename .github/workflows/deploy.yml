@@ -50,7 +50,8 @@ jobs:
           curl -fsSL "${FLYWAY_DRIVER_URL}" -o "$drivers/driver.zip"
           echo "${FLYWAY_DRIVER_SHA256}  $drivers/driver.zip" | sha256sum -c -
           unzip -q -o "$drivers/driver.zip" -d "$drivers"
-          docker run --rm -v "$PWD:/flyway/project" -v "$drivers:/flyway/jars" -w /flyway/project -e FLYWAY_URL="${FLYWAY_URL}" -e GOOGLE_APPLICATION_CREDENTIALS="/flyway/project/${GOOGLE_APPLICATION_CREDENTIALS#"$PWD"/}" redgate/flyway:12.6.1@sha256:5614562aac1f8a814b35a00a0b344d669d6435eb870f4f0d485e6ad8161f8302 -locations=filesystem:bigquery_tables/migrations -defaultSchema="${FLYWAY_SCHEMA}" -batch=true migrate
+          token="$(gcloud auth print-access-token)"; echo "::add-mask::${token}"
+          docker run --rm -v "$PWD:/flyway/project" -v "$drivers:/flyway/jars" -w /flyway/project -e FLYWAY_URL="${FLYWAY_URL};OAuthAccessToken=${token}" -e GOOGLE_APPLICATION_CREDENTIALS="/flyway/project/${GOOGLE_APPLICATION_CREDENTIALS#"$PWD"/}" redgate/flyway:12.6.1@sha256:5614562aac1f8a814b35a00a0b344d669d6435eb870f4f0d485e6ad8161f8302 -locations=filesystem:bigquery_tables/migrations -defaultSchema="${FLYWAY_SCHEMA}" -batch=true migrate
       - name: Copy dags/
         env:
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
