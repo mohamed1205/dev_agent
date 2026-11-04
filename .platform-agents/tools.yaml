@@ -96,7 +96,7 @@ instances:
         finance_hq: s3://pa-demo-exports-897729105732/finance
   - name: macie-dev
     tool: macie
-    enabled: false # turned on on test day, with Macie itself
+    enabled: true
     agents: [governance, error-triage]
     account: "897729105732"
     params: {}
