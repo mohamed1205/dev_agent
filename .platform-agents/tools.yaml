@@ -96,15 +96,7 @@ instances:
         finance_hq: s3://pa-demo-exports-897729105732/finance
   - name: macie-dev
     tool: macie
-    enabled: true
+    enabled: false
     agents: [governance, error-triage]
     account: "897729105732"
     params: {}
-  - name: deploy
-    tool: github-actions
-    enabled: true
-    agents: [cicd]
-    params:
-      files: [.github/workflows/deploy.yml]
-      deploys:
-        composer-dev: "gs://us-central1-composer-agent-dc6f6851-bucket/dags"
