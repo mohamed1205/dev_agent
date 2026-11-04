@@ -13,14 +13,18 @@ Changes to this file go through a normal PR, and its code owners review them.
 
 ## Branch sales (Finance)
 
-- transaction_id is unique in sales.pos_transactions: a file the POS vendor sends twice must not count twice
+Layers are the ones in .platform-agents/conventions.yaml: raw (raw_pos), gold (sales), plus the export to AWS.
+The raw layer keeps the files as they arrive, re-sent files and phone numbers included, so no rule below
+applies to raw_pos unless it says so.
+
+- transaction_id is unique in sales.pos_transactions: a file the POS vendor sends twice must not count twice. Applies to: gold
   - Example: the same transaction_id RUH-20261102-0001 in two files of the same day is counted once
-- Refunds count as negative sales: daily revenue includes REFUND rows with their negative amount
+- Refunds count as negative sales: daily revenue includes REFUND rows with their negative amount. Applies to: gold
   - Example: a sale of 100.00 SAR and a refund of -30.00 SAR on the same day give revenue 70.00 SAR
-- amount is never null in sales.pos_transactions, and is stored as an exact decimal (NUMERIC) in SAR
-- branch_code is one of RUH, JED, DMM in sales.pos_transactions
-- transaction_date is never null in sales.pos_transactions, whatever date format the branch's POS sends
-- Customer phone numbers never reach the gold layer (sales.pos_transactions, sales.daily_branch_sales)
-- Customer phone numbers never reach the AWS export for Finance HQ
-- sales.daily_branch_sales has one row per branch and day, and is refreshed every day by 04:00 UTC
-- In Finance HQ's AWS copy (finance_hq.daily_branch_sales), branch_code is one of RUH, JED, DMM, revenue_sar is never null, and there is one row per branch and day
+- amount is never null in sales.pos_transactions, and is stored as an exact decimal (NUMERIC) in SAR. Applies to: gold
+- branch_code is one of RUH, JED, DMM in sales.pos_transactions. Applies to: gold
+- transaction_date is never null in sales.pos_transactions, whatever date format the branch's POS sends. Applies to: gold
+- Customer phone numbers never reach sales.pos_transactions or sales.daily_branch_sales. Applies to: gold (raw_pos keeps them, restricted)
+- Customer phone numbers never reach the AWS export for Finance HQ. Applies to: export
+- sales.daily_branch_sales has one row per branch and day, and is refreshed every day by 04:00 UTC. Applies to: gold
+- In Finance HQ's AWS copy (finance_hq.daily_branch_sales), branch_code is one of RUH, JED, DMM, revenue_sar is never null, and there is one row per branch and day. Applies to: export
